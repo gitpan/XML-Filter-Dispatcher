@@ -27,19 +27,19 @@ sub {
     $h = $ab->playback( XML::Filter::Dispatcher->new(
         Rules => [
             ## Any leaf nodes get stringified
-            "//@*"            => [ "string()" => sub { xadd } ],
+            '@*'            => [ "string()" => sub { xadd } ],
 
             ## Any leaf nodes get stringified
-            "//*"             => [ "string()" => sub { xadd } ],
+            '*'             => [ "string()" => sub { xadd } ],
 
             ## This next one is where we'd new any contained objects.
-            "//*[*]"          => sub { xset {} },
+            '*[*]'          => sub { xset {} },
 
             ## This next one is where we would new the root object.
-            "/*"              => sub { xset {} },
+            '/*'              => sub { xset {} },
 
             ## And here's where we return the root object
-            "/end-element::*" => sub { xpop },
+            '/end-element::*' => sub { xpop },
         ],
 #        Debug => 1,
     ) );
@@ -49,6 +49,125 @@ sub {
 sub { ok $h->{a}->[0],      "A"  },
 sub { ok $h->{e}->{f}->[0], "B1" },
 sub { ok $h->{e}->{f}->[1], "B2" },
+
+sub {
+    $h = $ns->playback( XML::Filter::Dispatcher->new(
+        Rules => [
+            ## Any leaf nodes get stringified
+            '@*'            => [ "string()" => sub { xadd } ],
+
+            ## Any leaf nodes get stringified
+            '*'             => [ "string()" => sub { xadd } ],
+
+            ## This next one is where we'd new any contained objects.
+            '*[*]'          => sub { xset {} },
+
+            ## This next one is where we would new the root object.
+            '/*'              => sub { xset {} },
+
+            ## And here's where we return the root object
+            '/end-element::*' => sub { xpop },
+        ],
+#        Debug => 1,
+    ) );
+    ok ref $h, "HASH";
+},
+
+sub { ok $h->{a}->[0],      "A"  },
+sub { ok $h->{e}->{f}->[0], "B1" },
+sub { ok $h->{e}->{f}->[1], "B2" },
+
+sub {
+    $h = $ns->playback( XML::Filter::Dispatcher->new(
+        Rules => [
+            ## Any leaf nodes get stringified
+            '*/@*'            => [ "string()" => sub { xadd } ],
+
+            '@xmlns'          => undef,
+
+            ## This next one is where we would new the root object.
+            '/*'              => sub { xset [] },
+
+            ## And here's where we return the root object
+            '/end-element::*' => sub { xpop },
+        ],
+#        Debug => 1,
+    ) );
+    ok ref $h, "ARRAY";
+},
+
+sub { ok $h->[0], "A" },
+sub { ok $h->[1], "FOOA" },
+sub { ok $h->[2], "foo-ns" },
+sub { ok $h->[3], "AA1" },
+sub { ok $h->[4], "AA2" },
+
+sub {
+    $h = $ab->playback( XML::Filter::Dispatcher->new(
+        Namespaces => { none => "" },
+
+        Rules => [
+            ## Any leaf nodes get stringified
+            '@*'  => [ "string()" => sub { xadd } ],
+
+            ## This next one is where we would new the root object.
+            '/*'              => sub { xset [] },
+
+            ## And here's where we return the root object
+            '/end-element::*' => sub { xpop },
+        ],
+#        Debug => 2,
+    ) );
+    ok ref $h, "ARRAY";
+},
+sub { ok $h->[0], "A" },
+sub { ok $h->[1], "AA1" },
+sub { ok $h->[2], "AA2" },
+
+sub {
+    $h = $ab->playback( XML::Filter::Dispatcher->new(
+        Namespaces => { none => "" },
+
+        Rules => [
+            ## Any leaf nodes get stringified
+            '@none:*'  => [ "string()" => sub { xadd } ],
+
+            ## This next one is where we would new the root object.
+            '/*'              => sub { xset [] },
+
+            ## And here's where we return the root object
+            '/end-element::*' => sub { xpop },
+        ],
+#        Debug => 1,
+    ) );
+    ok ref $h, "ARRAY";
+},
+
+sub { ok $h->[0], "A" },
+sub { ok $h->[1], "AA1" },
+sub { ok $h->[2], "AA2" },
+
+sub {
+    $h = $ab->playback( XML::Filter::Dispatcher->new(
+        Namespaces => { none => "" },
+
+        Rules => [
+            ## Any leaf nodes get stringified
+            'none:*/@none:*'  => [ "string()" => sub { xadd } ],
+
+            ## This next one is where we would new the root object.
+            '/*'              => sub { xset [] },
+
+            ## And here's where we return the root object
+            '/end-element::*' => sub { xpop },
+        ],
+#        Debug => 1,
+    ) );
+    ok ref $h, "ARRAY";
+},
+
+sub { ok $h->[1], "AA1" },
+sub { ok $h->[2], "AA2" },
 
 );
 

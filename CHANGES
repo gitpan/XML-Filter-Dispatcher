@@ -1,6 +1,10 @@
 CHANGES file for XML::Filter::Dispatcher
 
-
+0.46 Fri Jan 10 09:13:37 EST 2003
+    - Updated SYNOPSIS, it was badly out of date and tripped up
+      t@tomacorp.com, as seen on perlmonks (thanks, Matt).
+    - Get '@node:*' => [ 'string()' => sub {} ] working, along with
+      other related expressions.
 
 0.45 Fri Jan  3 14:56:23 EST 2003
     - Replace xset_fallthrough() with the much more flexible
@@ -21,8 +25,8 @@ CHANGES file for XML::Filter::Dispatcher
     - implemented xset_fallthrough().
 
 0.43 Tue Dec 31 00:48:16 EST 2002
-    - Allow "@*" => [ "string()" => \&foo ] rules to work.
-    - Allow "end::foo" rules to work
+    - Allow '@*' => [ 'string()' => \&foo ] rules to work.
+    - Allow 'end::foo' rules to work
     - Add tracing support to xstack directives.
     - The xstack is now unwound after every non-start_ event.
     - start_element and end_element no longer accidently hide

@@ -1,6 +1,6 @@
 package XML::Filter::Dispatcher ;
 
-$VERSION = 0.45;
+$VERSION = 0.46;
 
 =head1 NAME
 
@@ -11,22 +11,21 @@ XML::Filter::Dispatcher - Path based event dispatching with DOM support
     use XML::Filter::Dispatcher qw( :all );
 
     my $f = XML::Filter::Dispatcher->new(
-
         Rules => [
-           'foo'            => \&handle_foo_start_tag,
-           '@bar'           => \&handle_bar_attr_at_start_tag,
+            'foo'               => \&handle_foo_start_tag,
+            '@bar'              => \&handle_bar_attr,
 
-           ## Send any <foo> elts and their contents to $handler
-           'foo'            => $handler,
+            ## Send any <foo> elts and their contents to $handler
+            'snarf//self::node()'  => $handler,
 
-           ## Print the text of all <description> elements
-           'string( description )' => sub { print xvalue },
-       ],
+            ## Print the text of all <description> elements
+            'description' 
+                    => [ 'string()' => sub { push @out, xvalue } ],
+        ],
 
-       Vars => [
-           "id" => [ string => "12a" ],
-       ],
-
+        Vars => {
+            "id" => [ string => "12a" ],
+        },
     );
 
 =head1 DESCRIPTION
@@ -766,6 +765,7 @@ sub new {
 
     return $self unless @{$self->{OpTree} || []};
 
+    $self->{OpTree}->fixup( {} );
     if ( ( $self->{Debug} || 0 ) > 1 ) {
         open F, ">foo.png";
         print F $self->{OpTree}->as_graphviz->as_png;
@@ -773,7 +773,6 @@ sub new {
         system( "ee foo.png" );
     }
 
-    $self->{OpTree}->fixup( {} );
     my $code = $self->{OpTree}->as_incr_code( {
         FoldConstants => $self->{FoldConstants},
     } );

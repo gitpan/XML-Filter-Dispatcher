@@ -20,6 +20,7 @@ t/order.t
 t/postponements.t
 t/stooges.t
 t/struct.t
+t/synopsis.t
 t/useless.t
 t/vars.t
 t/xpath.t

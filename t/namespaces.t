@@ -19,8 +19,11 @@ my @out;
 
 my @tests = (
 sub {
+    @out = ();
     $ns->playback( XML::Filter::Dispatcher->new(
-        Namespaces => { goo => "foo-ns" },
+        Namespaces => {
+            goo  => "foo-ns",
+        },
         Rules => [
             'root'  => sub { push @out, "root"  },
             '@goo:a'=> sub { push @out, "foo:a" },
@@ -31,10 +34,47 @@ sub {
     ok 1;
 },
 
+sub { ok int @out, 4 },
 sub { ok $out[0], "root",  "out[0]" },
 sub { ok $out[1], "foo:a", "out[1]" },
 sub { ok $out[2], "f",     "out[2]" },
 sub { ok $out[3], "foo:f", "out[3]" },
+
+sub {
+    @out = ();
+    $ns->playback( XML::Filter::Dispatcher->new(
+        Namespaces => {
+            none => "",
+        },
+        Rules => [
+            'none:*'  => sub { push @out, $_[1]->{Name} },
+            'none:f'  => sub { push @out, "none:" . $_[1]->{Name} },
+        ],
+    ) );
+    ok 1;
+},
+
+sub { ok int @out, 3 },
+sub { ok $out[0], "root",   "out[0]" },
+sub { ok $out[1], "e",      "out[1]" },
+sub { ok $out[2], "none:f", "out[2]" },
+
+sub {
+    @out = ();
+    $ns->playback( XML::Filter::Dispatcher->new(
+        Namespaces => {
+            none => "",
+        },
+        Rules => [
+            'none:*/@none:*'  => sub { push @out, $_[1]->{Name} },
+        ],
+    ) );
+    ok 1;
+},
+
+sub { ok int @out, 2 },
+sub { ok $out[0], "a",   "out[0]" },
+sub { ok $out[1], "aa1", "out[1]" },
 
 );
 

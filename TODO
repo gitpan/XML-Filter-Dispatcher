@@ -1,16 +1,14 @@
 - test "as_hash( /a/[b] )"
 
-- get "*[ not *]" => [ "string()" => \&foo ] working
-
 - optimize the event queueing; we're keeping more events than we need to.
 
-- I think that the "last match wins" logic has been corrupted by
-  the predicate event queueing: it's probably "last predicate to
-  be checked wins" now.  Really need to label each rule as it's parsed
-  or something so it can stain PendingActions with it's position so
-  the right action can be chosen.  This should also open the door
-  to mulitvalued action ratings so that XSLT match collision
-  resolution logic can be implemented.
+- There's a cheat in self_node::immed_code_template that returns the
+  \$ctx from the first expression in things like:
+
+      '@*' => [ 'string()' => sub { ... } ]
+
+  .  That's now been copied in to a couple of other places and it's likely
+  that it needs to go everywhere.
 
 - allow alternate grammars
 
@@ -30,9 +28,12 @@
 
 - See if we can avoid conflicts in the precursorization code; a quick
   glance shows that //text[self::text()] seems to be reusing the
-  Precursors positions.
+  Precursors positions. (check this: the precursorization code has
+  since been rewritten).
 
-- Centralize the generation of queueing the curried functions
+- Centralize the generation code for queueing the curried functions.
+  optimize it so that queing that isn't possible (like for characters
+  events inside anything but start_element events) isn't done.
 
 - Extract more helper subs in to a runtime to reduce the amount of
   generated code.

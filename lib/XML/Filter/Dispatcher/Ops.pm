@@ -312,6 +312,9 @@ sub XFD::Op::fixup {
                 my $op = XFD::Axis::descendant_or_self->new;
                 $op->set_next( $_ );
                 $_ = $op;
+                $op = XFD::doc_node->new;
+                $op->set_next( $_ );
+                $_ = $op;
             }
 
             ## This statement is why the descendant-or-self:: insertion
@@ -471,6 +474,13 @@ sub _eval_at_compile_time {
 ##
 @XFD::PathTest::ISA = qw( XFD::Op );
 
+
+## TODO: factor som/all of this in to possible_event_types().
+## That could die with an error if there are no possible event types.
+## Hmmm, may also need to undo the oddness that a [] PossibleEventTypes
+## means "any" (that's according to a comment, need to verify that
+## the comment does not lie).
+
 sub XFD::PathTest::check_context {
     my $self = shift;
     my ( $context ) = @_;
@@ -482,9 +492,12 @@ sub XFD::PathTest::check_context {
         if keys %{$hash_name}
             && exists ${$hash_name}{$context->{Axis}};
 
-    ## These are the types of events that are legal for a path test to
-    ## be applied to.  Unless the context has one of these in it's
-    ## PossibeEventTypes, it's an error.
+    ## useful_event_contexts are the events that are useful for a path
+    ## test to be applied to.  If the context does not have one of these
+    ## in it's PossibleEventTypes, then it's a useless (never-match)
+    ## expression.  For now, we die().  TODO: warn, but allow the
+    ## warning to be silenced.
+
     if ( $self->can( "useful_event_contexts" )
         && defined $context->{PossibleEventTypes}
         && @{$context->{PossibleEventTypes}} ## empty list = "any".
@@ -492,6 +505,16 @@ sub XFD::PathTest::check_context {
         my %possibles = map {
             ( $_ => undef );
         } @{$context->{PossibleEventTypes}};
+
+        my @not_useful; my @useful;
+
+        for ( $self->useful_event_contexts ) {
+            exists $possibles{$_}
+                ? push @useful, $_
+                : push @not_useful, $_;
+        }
+
+#warn $context->{PossiblesSetBy}->op_type, "/", $self->op_type, " NOT USEFUL: ", join( ",", @not_useful ), "  (useful: ", join( ",", @useful ), ")\n" if @not_useful;
         die 
             $context->{PossiblesSetBy}->op_type,
             " (which can result in ",
@@ -507,8 +530,8 @@ sub XFD::PathTest::check_context {
             " (which only match ",
             join( ", ", $self->useful_event_contexts ),
             " event types)",
-             " can never match\n"
-             unless grep exists $possibles{$_}, $self->useful_event_contexts;
+            " can never match\n"
+            unless @useful;
     }
 }
 
@@ -572,6 +595,20 @@ sub XFD::PathTest::insert_next_in_to_template {
 }
 
 
+sub XFD::PathTest::possible_event_types {
+    my $self = shift;
+    my ( $context ) = @_;
+
+    my $possibles = $self->possible_event_type_map( @_ );
+
+    my %seen;
+    my @possibles = grep !$seen{$_}++,
+        map exists $possibles->{$_} ? @{$possibles->{$_}} : (),
+            @{$context->{PossibleEventTypes}};
+
+    return @possibles;
+}
+
 ## "Incremental code" gets evaluated SAX event by SAX event, currying it's
 ## results until future events are received if need be.
 sub XFD::PathTest::as_incr_code {
@@ -594,7 +631,8 @@ sub XFD::PathTest::as_incr_code {
     ## For instance, in non-currying axes, the current set of
     ## possibles needs to be intersected with this axis' set
     ## of possibles.
-    my $set_possibles = $self->can( "possible_event_types" );
+    my $set_possibles = $self->can( "possible_event_type_map" );
+#warn $self->op_type, ",", $set_possibles;
     local $context->{PossibleEventTypes} = [ $self->possible_event_types( @_ ) ]
         if $set_possibles;
     local $context->{PossiblesSetBy} = $self
@@ -2297,7 +2335,20 @@ _compile_math_op modulus        => "%";
 ##
 @XFD::doc_node::ISA = qw( XFD::PathTest );
 
+sub XFD::doc_node::possible_event_type_map {
+    ## This is because there's no surrounding context for this, ever,
+    ## so we need to bootstrap $context->{PossibleEventTypes} by
+    ## circumventing XSF::PathTest::possible_event_types() with our
+    ## own.  Defining *this* sub cause our possible_event_types() to
+    ## be called.
+    confess "this is a DUMMY to force possibe_event_types to be called";
+}
+
+
+## TODO: see if we really need end_document here (and end_element in other places)
+#sub XFD::doc_node::possible_event_types { qw( start_document end_document ) }
 sub XFD::doc_node::possible_event_types { qw( start_document end_document ) }
+
 sub XFD::doc_node::incr_code_template {
     my $self = shift;
     return <<CODE_END;
@@ -2325,9 +2376,15 @@ sub XFD::self_node::curry_tests {
 }
 
 # This little method lets rules like '@*' => [ 'string()' => sub { ... } ]
-# work: it checks to see if it must be called in an attribute context and
-# returns the current node.  Otherwise it defaults to the default action,
-# which is to request precursorization.  This is an awkward little kludge,
+# work: it checks to see if it will only be called in an attribute context and
+# returns the current node.  This works because 'string()' is really
+# 'string(.)', which is really a function call to string() with self_node
+# as its first parameter.  So, if self_node can only be interpreted in
+# attribute context, then it returns $ctx as immediate code.  Otherwise
+# it lets XFD::PathTest precursorize thie and tell get_expr_code to
+# wait and then look in the postponement for its answer.
+
+# This is an awkward little kludge,
 # but I haven't taken the time to figure out how the compiler should handle
 # the general case of this situation.  TODO: Probably do more than just
 # attributes here; probably comment and PI.  Perhaps also characters, but
@@ -2336,12 +2393,14 @@ sub XFD::self_node::immed_code_template {
     my $self = shift;
     my ( $context ) = @_;
 
-    return $self->XFD::PathTest::immed_code_template( @_ )
-        unless $context->{PossibleEventTypes}
+#warn $context->{PossiblesSetBy}->op_type, ": ", join ",", @{$context->{PossibleEventTypes}};
+
+    return "\$ctx"
+        if $context->{PossibleEventTypes}
             && @{$context->{PossibleEventTypes}} == 1
             && $context->{PossibleEventTypes}->[0] eq "attribute";
 
-    return "\$ctx";
+    return $self->XFD::PathTest::immed_code_template( @_ );
 }
 
 
@@ -2388,17 +2447,10 @@ sub XFD::node_name::new {
 
 sub XFD::node_name::curry_tests { qw( start_element attribute ) }
 
-sub XFD::node_name::possible_event_types  {
-    my $self = shift;
-    my ( $context ) = @_;
-
-    ## TODO: This sort of winnowing for other PathTests.  Perhaps add
-    ## a helper member to XPathTest to do this.  I don't think we
-    ## always want to do it because some tests, like child:: probably
-    ## don't want to do this, but rather should hard set them.
-    my %possibles = map { ( $_ => undef ) } @{$context->{PossibleEventTypes} || [qw( start_element attribute )]};
-    grep exists $possibles{$_}, qw( start_element attribute );
-}
+sub XFD::node_name::possible_event_type_map { {
+    'start_element' => [qw( start_element )],
+    'attribute'     => [qw( attribute     )],
+} }
 
 sub XFD::node_name::useful_event_contexts { qw( start_element end_element attribute ) }
 
@@ -2472,7 +2524,11 @@ sub XFD::namespace_test::new {
 
 sub XFD::namespace_test::curry_tests { qw( start_element attribute ) }
 
-sub XFD::namespace_test::possible_event_types { qw( start_element attribute ) }
+sub XFD::namespace_test::possible_event_type_map { {
+    'start_element' => [qw( start_element )],
+    'attribute'     => [qw( attribute     )],
+} }
+
 sub XFD::namespace_test::useful_event_contexts { qw( start_element end_element attribute ) }
 
 sub XFD::namespace_test::condition {
@@ -2640,16 +2696,20 @@ sub axis {
    @XFD::Axis::ISA = qw( XFD::PathTest );
 sub XFD::Axis::op_type { shift->XFD::Op::op_type . "::" }
 sub XFD::Axis::principal_event_type { "start_element" }
-sub XFD::Axis::possible_event_types { () } ## means "any"
 
 ##########
    @XFD::Axis::attribute::ISA = qw( XFD::Axis );
 sub XFD::Axis::attribute::curry_tests { ( "start_element" ) }
 sub XFD::Axis::attribute::principal_event_type { "attribute" }
-sub XFD::Axis::attribute::possible_event_types { qw( attribute ) }
+sub XFD::Axis::attribute::possible_event_type_map {
+#warn "HI!";
+{
+    start_element => [qw( attribute )],
+} }
+    
 sub XFD::Axis::attribute::useful_event_contexts { qw( start_element end_element ) }
 
-#X This is an aborted attempt to make things following and attribute:: 
+#X This is an aborted attempt to make things following an attribute:: 
 #X run immediately.
 #Xsub XFD::Axis::attribute::as_incr_code {  ## not ..._template()!
 sub XFD::Axis::attribute::incr_code_template {
@@ -2677,7 +2737,7 @@ sub XFD::Axis::attribute::incr_code_template {
 
     return <<CODE_END if @curry_tests == 1;
 emit_trace_SAX_message "EventPath: queuing for attribute::" if is_tracing;
-push \@{\$ctx->{ChildCtx}->{$curry_tests[0]}}, [ ## attibute::
+push \@{\$ctx->{ChildCtx}->{$curry_tests[0]}}, [ ## attribute::
   sub {
     my ( \$postponement ) = \@_;
     emit_trace_SAX_message "EventPath: in attribute \$ctx->{Node}->{Name}" if is_tracing;
@@ -2744,11 +2804,11 @@ CODE_END
 
 ##########
    @XFD::Axis::child::ISA = qw( XFD::Axis );
-sub XFD::Axis::child::possible_event_types {
-    ## TODO: optimize this list based on which tests we actuall
-    ## curry for.
-    qw( start_element comment processing_instruction characters )
-}
+sub XFD::Axis::child::possible_event_type_map { {
+    start_document => [qw( start_element comment processing_instruction )],
+    start_element  => [qw( start_element comment processing_instruction characters )],
+} }
+
 sub XFD::Axis::child::useful_event_contexts { qw( start_document start_element ) }
 
 sub XFD::Axis::child::incr_code_template {
@@ -2798,11 +2858,19 @@ CODE_END
 ##########
    @XFD::Axis::descendant_or_self::ISA = qw( XFD::Axis );
 
-sub XFD::Axis::descendant_or_self::possible_event_types {
-    ## TODO: optimize this list based on which tests we actuall
-    ## curry for.
-    qw( start_element comment processing_instruction characters )
-}
+sub XFD::Axis::descendant_or_self::possible_event_type_map { {
+    ## This is odd: we tell the caller that we could call our kids for
+    ## any of these when called on a start_document.  And, literally,
+    ## thats' true.  But I'd like to have it set up so that
+    ## this is unwound after a start_document so it only queues for
+    ## start_element *there*, but then queues for all of them other
+    ## places.  That's just for neatness' sake; there would be minimal
+    ## performance improvement.  And it would take extra generated code,
+    ## I think.
+    ## these in start_document.  
+    'start_document' => [qw( start_element comment processing_instruction characters )],
+    'start_element'  => [qw( start_element comment processing_instruction characters )],
+}; }
 
 ## useful in any event context, even though self:: alone would be
 ## more appropriate in most.
@@ -2867,7 +2935,10 @@ CODE_END
 ##########
    @XFD::Axis::end::ISA = qw( XFD::Axis );
 sub XFD::Axis::end::principal_event_type  { "start_element" }
-sub XFD::Axis::end::possible_event_types  { qw( end_document end_element ) }
+sub XFD::Axis::end::possible_event_type_map  { {
+    start_document => [qw( end_document )],
+    start_element  => [qw( end_element )],
+} }
 sub XFD::Axis::end::useful_event_contexts { qw( start_document start_element ) }
 
 sub XFD::Axis::end::as_incr_code {  ## not ..._template()!
@@ -2887,6 +2958,7 @@ sub XFD::Axis::end::as_incr_code {  ## not ..._template()!
 
     local $context->{PrincipalEventType} = $self->principal_event_type;
     local $context->{PossibleEventTypes} = [ $self->possible_event_types( @_ ) ];
+    local $context->{PossiblesSetBy} = $self;
 
     if ( ! defined $context->{precursorize_action} ) {
         ## There are no predicates to leftwards
@@ -2925,7 +2997,9 @@ CODE_END
 ##########
    @XFD::Axis::end_document::ISA = qw( XFD::Axis );
 sub XFD::Axis::end_document::principal_event_type { "end_document" }
-sub XFD::Axis::end_document::possible_event_types { qw( end_document ) }
+sub XFD::Axis::end_document::possible_event_type_map { {
+    start_document => [qw( end_document )],
+} }
 sub XFD::Axis::end_document::useful_event_contexts { qw( start_document ) }
 
 sub XFD::Axis::end_document::as_incr_code {  ## not ..._template()!
@@ -2945,6 +3019,7 @@ sub XFD::Axis::end_document::as_incr_code {  ## not ..._template()!
 
     local $context->{PrincipalEventType} = $self->principal_event_type;
     local $context->{PossibleEventTypes} = [ $self->possible_event_types( @_ ) ];
+    local $context->{PossiblesSetBy} = $self;
 
     if ( ! defined $context->{precursorize_action} ) {
         ## There are no predicates to leftwards
@@ -2982,7 +3057,9 @@ CODE_END
 
 ##########
    @XFD::Axis::end_element::ISA = qw( XFD::Axis );
-sub XFD::Axis::end_element::possible_event_types { qw( end_element ) }
+sub XFD::Axis::end_element::possible_event_type_map { {
+    start_element => [qw( end_element )],
+} }
 sub XFD::Axis::end_element::useful_event_contexts { qw( start_document start_element ) }
 sub XFD::Axis::end_element::as_incr_code {  ## not ..._template()!
     my $self    = shift;
@@ -3005,6 +3082,8 @@ sub XFD::Axis::end_element::as_incr_code {  ## not ..._template()!
 
     local $context->{PrincipalEventType} = $self->principal_event_type;
     local $context->{Axis} = $self->op_type;
+    local $context->{PossibleEventTypes} = [ $self->possible_event_types( @_ ) ];
+    local $context->{PossiblesSetBy} = $self;
 
     if ( ! defined $context->{precursorize_action} ) {
         ## There are no predicates to leftwards
@@ -3071,25 +3150,33 @@ CODE_END
    @XFD::Axis::self::ISA = qw( XFD::Axis );
 ## don't define possible_node_types; pass the current ones
 ## through from LHS to RHS.
+sub XFD::Axis::self::possible_node_types { () } ## () means "all".
 sub XFD::Axis::self::incr_code_template { "<NEXT>" }
 
 ##########
    @XFD::Axis::start::ISA = qw( XFD::Axis );
 sub XFD::Axis::start::principal_event_type { "start_element" }
-sub XFD::Axis::start::possible_event_types  {qw( start_document start_element )}
+sub XFD::Axis::start::possible_event_type_map { {
+    start_document => [qw( start_document )],
+    start_element  => [qw( start_element  )],
+} }
 sub XFD::Axis::start::useful_event_contexts {qw( start_document start_element )}
 sub XFD::Axis::start::incr_code_template { "<NEXT>" }
 
 ##########
    @XFD::Axis::start_document::ISA = qw( XFD::Axis );
 sub XFD::Axis::start_document::principal_event_type { "start_document" }
-sub XFD::Axis::start_document::possible_event_types { qw( start_document ) }
+sub XFD::Axis::start_document::possible_event_type_map { {
+    start_document => [qw( start_document )],
+} }
 sub XFD::Axis::start_document::useful_event_contexts { qw( start_document ) }
 sub XFD::Axis::start_document::incr_code_template { "<NEXT>" }
 
 ##########
    @XFD::Axis::start_element::ISA = qw( XFD::Axis );
-sub XFD::Axis::start_element::possible_event_types { qw( start_element ) }
+sub XFD::Axis::start_element::possible_event_type_map { {
+    start_element => [qw( start_element )],
+} }
 sub XFD::Axis::start_element::useful_event_contexts { qw( start_document start_element ) }
 sub XFD::Axis::start_element::incr_code_template {
     my $self = shift;
@@ -3130,17 +3217,25 @@ sub XFD::EventType::node::curry_tests {
 }
 ##########
    @XFD::EventType::text::ISA = qw( XFD::EventType );
-sub XFD::EventType::text::possible_event_types { "characters" }
-sub XFD::EventType::text::useful_event_contexts { qw( start_document start_element ) }
+sub XFD::EventType::text::possible_event_type_map { {
+    start_element => [qw( characters )],
+} }
+sub XFD::EventType::text::useful_event_contexts { qw( start_element ) }
 sub XFD::EventType::text::curry_tests { "characters" }
 ##########
    @XFD::EventType::comment::ISA = qw( XFD::EventType );
-sub XFD::EventType::comment::possible_event_types { "comment" }
+sub XFD::EventType::comment::possible_event_type_map { {
+    start_document => [qw( characters )],
+    start_element  => [qw( characters )],
+} }
 sub XFD::EventType::comment::useful_event_contexts { qw( start_document start_element ) }
 sub XFD::EventType::comment::curry_tests { "comment" }
 ##########
    @XFD::EventType::processing_instruction::ISA = qw( XFD::EventType );
-sub XFD::EventType::processing_instruction::possible_event_types { "processing_instruction" }
+sub XFD::EventType::processing_instruction::possible_event_type_map { {
+    start_document => [qw( processing_instruction )],
+    start_element  => [qw( processing_instruction )],
+} }
 sub XFD::EventType::processing_instruction::useful_event_contexts { qw( start_document start_element ) }
 sub XFD::EventType::processing_instruction::curry_tests { "processing_instruction" }
 ##########
@@ -3158,6 +3253,7 @@ sub XFD::EventType::principal_event_type::incr_code_template {
 
     my $desired_event_type = $context->{PrincipalEventType};
     my @possible_event_types = @{$context->{PossibleEventTypes} || []};
+#warn @possible_event_types;
 
     return "<NEXT>"
         if @possible_event_types == 1
