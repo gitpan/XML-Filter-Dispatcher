@@ -12,41 +12,146 @@ XML::Filter::Dispatcher::Ops - The Syntax Tree
 
 ## TODO: Replace XFD:: with XML::Filter::Dispatcher
 
+## TODO: "helper" subs.  functions?  dunno.
+## as-structure() EventPath function
+## emit XML chunk (well balanced, not wf)
+## as_document
+
+## TODO: use context->{PossibleEventTypes} to
+## reduce the amount of downstream test code and
+## perhaps the amount of currying.  No need to test
+## for EventType if we know only one node type is
+## possible :).
+
 package XFD;
 
-use Carp;
+use Carp qw( cluck confess );  ## NOT croak: this module must die "...\n".
+
+use constant is_tracing => defined $Devel::TraceSAX::VERSION;
+
+BEGIN {
+    eval( is_tracing
+        ? 'use Devel::TraceSAX qw( emit_trace_SAX_message ); 1'
+        : 'sub emit_trace_SAX_message; 1'
+    ) or die $@;
+
+}
 
 use strict;
 
 use vars ( 
-    '$fold_constants',    ## Whether or not to...  Set by ::Parser
-    '$rule_number',       ## What rule number this is.  Set by ::Parser.
-
-    '$has_start_or_end',  ## set when a start() or end() is compiled
-    '$anon_sub_count',    ## # of anon subs registered with current Dispatcher
-
-## TODO: reman self_curriers to st like "only_run_once_check_enabled"
-    '$self_curriers',     ## When an expression includes more than one
-                          ## foo-or-self axes, it is likely that it
-                          ## will curry more than once and the action
-                          ## may fire for each time a test is curried.
-                          ## So ".//a", for instance, gets curried once
-                          ## in the "." (all-nodes-or-self::node())
-                          ## and again in the "//" (descendant-or-self::node()),
-                          ## so the "a" (child::a) tests end up being executed
-                          ## twice.  $self_curriers is used to count the
-                          ## number of times an -or-self or union occurs
-                          ## and the action code gets wrapped with a
-                          ## double-firing preventer in this case.
-    '@precursors',        ## The precursors for this rule
-    '$predicate_depth',   ## Incremented by the lexer to let us know if
-                          ## we're in a predicate or not.  If we're in
-                          ## a predicate, we need to evaluate path
-                          ## expressions immediately, otherwise they
-                          ## become precursors when used as function/oper
-                          ## args or are left alone as incremental code
-                          ## for the primary expression.
+    '$dispatcher',        ## The X::F::D that we're doing the parse for.
 );
+
+=begin private
+
+=head1 Precursors and Postponment
+
+NOTE: in this blurb, nodes occur in alphabetical order in the document
+being processed.
+
+level 0 expressions are able to be evaluated using only the current
+event and it's 'ancestor events' and, when the match succeeds, the
+action is executed in the current event's context.  The path '/a/b[@c]'
+is level 0 can be evaluated using just the start_document event and the
+start_element events for <a>, <b>, and <c>.  So are the paths
+'/a[@a]/b[@b]/c' and '/a[b]/b[c]/c'.
+
+The paths '/a[b]' is not level 0; it requires some evaluation to occur
+when the start_element event for '/a' is seen and other evaluation when
+the start_element event for '/a/b' is seen; and when it does match
+(which will occur in the start event for the first '/a/b'), the action's
+execution context must be '/a', not '/a/b'.  In this case, the match
+must proceed in stages and the action is postponed until all stages are
+satisfied.
+
+This is implemented in this code by converting level 1 expressions in to
+precursors ('/a' and './b' in /a's context in our example) and
+postponing the main expression (which just fires the action in this
+case) using an object called a "postponement session" until enough
+precursors are satisfied.  Once enough precursors are satisfied, the
+action is executed and the postponement is destroyed.
+
+The phrase "enough precursors are satisfied" is used rather than "all
+precursors are satisfied" because expressions like 'a[ b or c ]' does
+not need both the './b' or './c' precursors; either one will suffice.
+
+A postponement session has a value slot for each precursor and a slot for
+the result context.  Each precursor fills is it's slot when it matches,
+and the primary precursor sets the main expression / action context.  As
+each precursor fires, it checks to see if enough of the slots are filled
+in and fires the action or main expression if so.  Expressions like
+'//*[b]' and '/a//b[c]' can cause multiple simultaneous postponement
+sessions for the same expression.
+
+For expressions like '/a/b[c]/d', the main expression (or result)
+context may not be set when some of the precursors match: /a/b/c will
+match before /a/b/d.  The precursor for '/a/b/d' is called the primary
+precursor and sets the result context.
+
+The action (or main expression in an expression line '/a[concat(b,c)]') is
+evaluated in the result context ('/a' in this case).
+
+The main expression (or action) should be executed once per primary
+precursor match in the document where the entire expression is true.
+So a rule with a pattern '/a/b[c]/d[e]' would fire once for every /a/b/d
+node in the document where the entire match is true.
+
+//a[b]/c and //a[c]/b
+
+The first precursor to match must create a postponement session.
+
+Q: How do we associate the precursors with their appropriate
+postponement sessions?
+
+In expressions like 'concat( /a, /b )', the precursors '/a' and '/b' are
+numbered 0 and 1 and there is a "main expression" of 'concat(
+PRECURSOR_0, PRECURSOR_1)', where the PRECURSOR_# is the result of the
+indicated precursor.  The main expression which is computed before
+firing the action.  The action context is "/".
+
+Expressions like 'concat( a, b )' are similar except that the action
+context is the parent of the <a> and <b> elements that match.
+
+In '/a[concat( b, c )]' the precursors are './b', './c' and 'a[concat(
+PRECURSOR_0, PRECURSOR_1 )]', and the action can only fire when
+PRECURSOR_2 becomes defined.  The action contexst is '/a'.
+
+Each time a context-setting precursor matches, all presursor sessions
+that it affects become "eligible" for firing.  A precursor session fires
+as soon as enough precursors are satisfied.
+
+=head2 Firing Policy
+
+This does not apply to level 0 patterns.
+
+An application may support multiple policies controlling when a
+postponed expression is finally completely evaluated (ie matches, fails
+to match, or returns a result).
+
+A "prompt evaluation policy" describes implementations where postponed
+expressions match the first time enough predicates are
+satisified (when the <b> start_element() arrives, in this case).  This
+is useful to minimize memory and recognize conditions as rapidly as
+possible.
+
+A "delayed evaluation policy" describes implementations where postponed
+expressions are evaluated during the end_...() event for the node
+deepest in the hierarchy for which an un-postponed test was true.  For
+example, rules with these patterns must fire their actions before the
+</a> if at all: '/a[b]', '/z/a/[b]'.   This may make some
+implementations easier but is discouraged unless necessary.
+
+An application must be apply a consistent firing policy policy prompt, 
+
+An application may also provide for 
+
+An application must detail whether it supports modes other than "prompt
+firing" or not and all applications 
+
+=end private
+
+=cut
 
 ###############################################################################
 ##
@@ -64,47 +169,62 @@ sub false() { \"false" }
 ##
 ## Helpers
 ##
-sub _looks_numeric($)          { $_[0] =~ /^[ \t\r\n]*-?(?:\d+(?:\.\d+)?|\.\d+)[ \t\r\n]*$/ }
+sub _looks_numeric($)  { $_[0] =~ /^[ \t\r\n]*-?(?:\d+(?:\.\d+)?|\.\d+)[ \t\r\n]*$/ }
 
-sub _looks_literal($)    { $_[0] =~ /^(?:'[^']*'|"[^"]*")(?!\n)\Z/       }
+sub _looks_literal($)  { $_[0] =~ /^(?:'[^']*'|"[^"]*")(?!\n)\Z/       }
 
 sub _indentomatic() { 1 }  ## Turning this off shaves a little parse time.
-sub _indent         { $_[0] =~ s/^/    /mg; }
+                           ## I leave it on for more readable error
+                           ## messages, and it's key for debugging since
+                           ## is so much more readable; in fact, messed
+                           ## up indenting can indicate serious problems
+
+sub _indent { Carp::confess "undef" unless defined $_[0]; $_[0] =~ s/^/  /mg; }
 
 sub _is_rel_path($) {
     my $path = shift;
 
     return 0
-        if ! $path->isa( "XFD::PathTest" )
-            ## TODO: Think through these next three isa() tests;
-            ## perhaps we should ## just flag relative vs. absolute
-            ## paths when parsed.
-            || $path->isa( "XFD::Axis::all_nodes_or_self" )   ## ./... paths
-            || $path->isa( "XFD::doc_node" )                  ## /... paths
-            || $path->isa( "XFD::Axis::descendant_or_self" )  ## //... paths
-
-            || $path->isa( "XFD::union" ); ## (a|b), union called this already.
+        if $path->isa( "XFD::PathTest" )
+            && $path->isa( "XFD::doc_node" )                  ## /... paths
+            && ! $path->isa( "XFD::union" ); ## (a|b), union called this already.
 
     return 1;
 }
 
 
-sub _rel2abs($) {
-    ## Converts any XPathTest expression to an absolute one.  This is because
-    ## "foo" is equivalent to "./foo" and "//foo" outside of predicates.
-    my $path = shift;
-    return $path unless _is_rel_path $path;
-
-    ## It's a relative location path, so prefix it with ./ and
-    ## convert it to code.
-    my $op = XFD::Axis::all_nodes_or_self->new;
-    $op->set_next( $path );
-    return $op;
-}
+###############################################################################
+##
+## Postponement Records
+##
+## When the current location step or operator/function call
+## in an expression can't be calculated because it needs some
+## future information, it must be postponed.  The portions of
+## the expression that can't yet be calculated are called
+## precursors; only when enough of them are calculated can
+## this expression be calculated.
+##
+## A Postponement record contains:
+##
+## - A list of contexts for which this postponement eventually
+##   becomes valid.
+## - A pointer to the parent postponement
+## - A set of results one for each precursor.
+##
+## A postponement record is a simple array with a few set data fields
+## in the first elements; the remaining elements are used to hold
+## precursor results.
+##
+## This could be an object, but we don't need any inheritence.
+##
+sub _p_parent_postponement() { 0 }
+sub _p_contexts()            { 1 }
+sub _p_first_precursor ()    { 2 }
 
 ###############################################################################
 ##
-## expression_as_incr_code
+## expr_as_incr_code
+##
 
 ##
 ## Precursors
@@ -124,88 +244,215 @@ sub _rel2abs($) {
 ## The precursor values are stored in $ctx because I'm afraid of leaky
 ## closure in older perl.  I haven't tested them in this case, but have been
 ## bit before.
-sub expression_as_incr_code {
-    my $main_expr_code = shift;
 
-    _indent $main_expr_code if _indentomatic;
-    
-    my $main_expr_anon_sub_index = $anon_sub_count++;
-    $main_expr_code = <<CODE_END;
-sub {
-    my ( \$d, \$ctx, \$child_ctx ) = \@_;
-
-$main_expr_code}
-CODE_END
-
-    return ( $main_expr_code ) unless @precursors;
-
-    $main_expr_code = <<CODE_END;
-## The main expression for rule $rule_number, which only
-## gets run if all precursors run and become defined.
-\$self->{AnonSubs}->[$main_expr_anon_sub_index] ||= $main_expr_code;
-CODE_END
-
-    my $precursor_number = 0;
-
-    ## NOTE: node->boolean conversions don't count because an undefined
-    ## precursor converts to false().
-    ## For other types, the type converters will not set a result unless
-    ## they run, and will set a result if they do.  They should never set
-    ## an undef result, so testing the precursors for definedness
-    ## should be just fine.
-    ##
-    ## TODO: rethink that to be completly sure.
-    my $precursor_gates = join " && ", map
-                $precursors[$_]->{NeedType} eq "boolean"
-                    ? ()
-                    : "\$main_ctx->{Precursors}->[$rule_number]"
-                      . " &&"
-                      . " defined( \$main_ctx->{Precursors}->[$rule_number]->[$_] )",
-            (0..$#precursors);
-
-    my @precursor_codes;
-    for my $precursor ( @precursors ) {
-##$self_curriers = 10;
-        $precursor_gates = "1" unless $precursor_gates;
-        my $precursor_setting_code = <<CODE_END;
-## rule $rule_number, precursor $precursor_number
-\$main_ctx->{Precursors}->[$rule_number]->[$precursor_number] = \$d->{ExpressionResult};
-if ( $precursor_gates ) {
-    \$d->{AnonSubs}->[$main_expr_anon_sub_index]->( \$d, \$main_ctx, \$child_ctx );
-} ## rule $rule_number, precursor $precursor_number
-CODE_END
-
-        my $converter_class = "XFD::node2$precursor->{NeedType}_converter";
-
-        die "Can't convert a node set to '$precursor->{NeedType}'"
-            . " (no $converter_class found)\n"
-            unless $converter_class->can( "new" );
-
-        my $converter= $converter_class->new;
-        $converter->set_next( _rel2abs( $precursor->{Expr} ) );
-
-        my $precursor_code = $converter->as_incr_code( \$precursor_setting_code );
-
-        _indent $precursor_code if _indentomatic;
-
-        push @precursor_codes, $precursor_code;
-        ++$precursor_number;
-    }
-
-    @precursors = ();
-
-    my $precursor_codes = join "", @precursor_codes;
-
-    return join "", , <<CODE_END
-## rule $rule_number
-$main_expr_code
-
-sub {  # precursors for rule $rule_number
-    my ( \$d, \$ctx, \$child_ctx ) = \@_;
-$precursor_codes} # precursors for rule $rule_number
-CODE_END
+sub _replace_NEXT {
+    my $what_next = "<NEXT>";
+    $what_next = pop if @_ > 2;
+    my $next_code = pop;
+    $_[0] =~ s{(^[ \t]*)?$what_next}{
+        if ( _indentomatic && defined $1 ) {
+            _indent $next_code for 1..(length( $1 ) / 2 );
+        }
+        $next_code
+    }gme;
 }
 
+
+###############################################################################
+##
+## Parse tree node base class
+##
+## This is used for all of the pieces of location paths axis tests, name
+## and type tests, predicates.  It is also used by a few functions
+## that act on the result of a location path (which is effectively a
+## node set with just the current node in it).
+##
+sub XFD::Op::new {
+    my $class = shift;
+    return bless [ @_ ], $class;
+}
+
+
+sub XFD::Op::op_type { ( my $type = ref shift ) =~ s/.*:// ; $type }
+
+
+sub XFD::Op::is_constant {
+    my $self = shift;
+    return ! grep ! $_->is_constant, @$self;
+}
+
+
+## fixup is called on a freshly parsed op tree just before it's
+## compiled to do optimization and other conversions.
+sub XFD::Op::fixup {
+    my $self = shift;
+    my ( $context ) = @_;
+
+    for ( @$self ) {
+        if ( defined && UNIVERSAL::isa( $_, "XFD::Op" ) ) {
+            if ( ! $context->{BelowRoot}
+                && ( $_->isa( "XFD::Axis::child" )
+                    || $_->isa( "XFD::Axis::attribute" )
+                    || $_->isa( "XFD::Axis::start_element" )
+                    || $_->isa( "XFD::Axis::end_element" )
+                )
+            ) {
+                ## The miniature version of XPath used in
+                ## XSLT's <template match=""> match expressions
+                ## seems to me to behave like // was prepended if
+                ## the expression begins with a child:: or
+                ## attribute:: axis (or their abbreviations: no
+                ## axis => child:: and @ => attribute::).
+                my $op = XFD::Axis::descendant_or_self->new;
+                $op->set_next( $_ );
+                $_ = $op;
+            }
+
+            ## This statement is why the descendant-or-self:: insertion
+            ## is done in Op::fixup instead of Rule::fixup.  We want
+            ## this transform to percolate down to the first op of each
+            ## branch of these "grouping" ops.
+            local $context->{BelowRoot} = 1
+                unless $_->isa( "XFD::Parens" )
+                    || $_->isa( "XFD::union" )
+                    || $_->isa( "XFD::Action" )
+                    || $_->isa( "XFD::Rule" );
+
+            $_->fixup( @_ );
+        }
+    }
+
+    return $self;
+}
+
+
+sub XFD::Op::_add_to_graphviz {
+    my $self = shift;
+    my ( $g ) = @_;
+
+    my $port_id = 0;
+
+    my $port_labels = join( "|",
+        map {
+            my $desc = ref $_
+                ? $self->can( "parm_type" )
+                    ? $self->parm_type( $port_id - 1 )
+                    : UNIVERSAL::can( $_, "_add_to_graphviz" )
+                        ? ""
+                        : ref $_
+                : defined $_
+                    ? do {
+                        local $_ = $_;
+                        "'$_'"
+                    }
+                    : "undef"
+            ;
+            for ( $desc ) {
+                s/([|<>\[\]{}"])/\\$1/g;
+                s/\n/\\\\n/g;
+                s/(.{64}).*/$1.../;
+            }
+            "<port" . $port_id++ . ">" . $desc;
+        } @$self
+    );
+
+    my $label = join( "",
+        "{",
+        $self->op_type,
+        $port_labels eq "<port0>"
+            ? ()
+            : ( "|{", $port_labels, "}" ),
+        "}"
+    );
+
+    $g->add_node(
+        shape    => "record",
+        name     => int $self,
+        label    => $label,
+        color    => $self->is_constant    ? "blue"
+            : $self->isa( "XFD::Action" ) ? "#A00000"
+                                          : "black",
+        height   => 0.1,
+        fontname => "Helvetica",
+        fontsize => 10,
+    );
+
+    $port_id = 0;
+    for ( @$self ) {
+        if ( UNIVERSAL::can( $_, "_add_to_graphviz" ) ) {
+            $_->_add_to_graphviz( $g );
+            $g->add_edge( {
+                from      => int $self,
+                $port_labels eq "<port0>"
+                    ? ()
+                    : ( from_port => $port_id ),
+                to        => int $_,
+            } );
+        }
+        ++$port_id;
+    }
+}
+
+sub XFD::Op::as_graphviz {
+    my $self = shift;
+
+    require GraphViz;
+    my $g = GraphViz->new(
+        nodesep => 0.1,
+        ranksep => 0.1,
+    );
+
+    $self->_add_to_graphviz( $g );
+
+    return $g;
+}
+
+###############################################################################
+##
+## Numeric and String literals
+##
+@XFD::NumericConstant::ISA = qw( XFD::Op );
+sub XFD::NumericConstant::result_type   { "number" }
+sub XFD::NumericConstant::is_constant   { 1 }
+sub XFD::NumericConstant::as_immed_code { shift->[0] }
+
+@XFD::StringConstant::ISA = qw( XFD::Op );
+sub XFD::StringConstant::result_type   { "string" }
+sub XFD::StringConstant::is_constant   { 1 }
+sub XFD::StringConstant::as_immed_code { 
+    my $s = shift->[0];
+    $s =~ s/([\\'])/\\$1/g;
+    return join $s, "'", "'";
+}
+
+################################################################################
+##
+## Compile-time constant folding
+##
+## By tracking what values and expressions are constant, we can use
+## eval "" to evaluate things at compile time.
+##
+sub _eval_at_compile_time {
+    my ( $type, $code, $context ) = @_;
+
+    return $code unless $context->{FoldConstants};
+
+    my $out_code = eval $code;
+    die "$@ in XPath compile-time execution of ($type) \"$code\"\n"
+        if $@;
+
+    ## Perl's bool ops ret. "" for F
+    $out_code = "0"
+        if $type eq "boolean" && !length $out_code;
+    $out_code = $$out_code if ref $out_code;
+    if ( $type eq "string" ) {
+        $out_code =~ s/([\\'])/\\$1/g;
+        $out_code = "'$out_code'";
+    }
+
+    #warn "compiled `$code` to `$out_code`";
+    return $out_code;
+}
 
 ###############################################################################
 ##
@@ -216,16 +463,65 @@ CODE_END
 ## that act on the result of a location path (which is effectively a
 ## node set with just the current node in it).
 ##
-sub XFD::PathTest::new {
-    my $class = shift;
-    return bless [ @_, undef ], $class;
+@XFD::PathTest::ISA = qw( XFD::Op );
+
+sub XFD::PathTest::check_context {
+    my $self = shift;
+    my ( $context ) = @_;
+
+    my $hash_name = ref( $self ) . "::AllowedAfterAxis";
+
+    no strict "refs";
+    die "'", $self->op_type, "' not allowed after '$context->{Axis}'\n"
+        if keys %{$hash_name}
+            && exists ${$hash_name}{$context->{Axis}};
+
+    ## These are the types of events that are legal for a path test to
+    ## be applied to.  Unless the context has one of these in it's
+    ## PossibeEventTypes, it's an error.
+    if ( $self->can( "useful_event_contexts" )
+        && defined $context->{PossibleEventTypes}
+        && @{$context->{PossibleEventTypes}} ## empty list = "any".
+    ) {
+        my %possibles = map {
+            ( $_ => undef );
+        } @{$context->{PossibleEventTypes}};
+        die 
+            $context->{PossiblesSetBy}->op_type,
+            " (which can result in ",
+            @{$context->{PossibleEventTypes}}
+                ? join( ", ", @{$context->{PossibleEventTypes}} ) . (
+                    @{$context->{PossibleEventTypes}} > 1
+                        ? " event contexts"
+                        : " event context"
+                )
+                : "any event context",
+            ") followed by ",
+            $self->op_type,
+            " (which only match ",
+            join( ", ", $self->useful_event_contexts ),
+            " event types)",
+             " can never match\n"
+             unless grep exists $possibles{$_}, $self->useful_event_contexts;
+    }
 }
+
+sub XFD::PathTest::new { shift->XFD::Op::new( @_, undef ) }
+
+sub XFD::PathTest::is_constant { 0 }
+sub XFD::PathTest::result_type { "nodeset" }
 
 sub _next() { -1 }
 
 sub XFD::PathTest::set_next {
     my $self = shift;
+Carp::confess "undef!" unless defined $_[0];
     if ( $self->[_next] ) {
+        # Unions cause this method to be called multiple times
+        # and we never want to have a loop.
+        return if $self          == $_[0];
+        return if $self->[_next] == $_[0];
+Carp::confess "_next ($self->[_next]) can't set_next" unless $self->[_next]->can( "set_next" );
         $self->[_next]->set_next( @_ );
     }
     else {
@@ -235,11 +531,15 @@ sub XFD::PathTest::set_next {
 
 ## child:: and descendant-or-self:: axes need to curry to child nodes.
 ## These tests are the appropriate tests for child nodes.
-my %child_curry_tests = qw( EltTests 1 CommentTests 1 PITests 1 TextTests 1 );
+my %child_curry_tests = qw( start_element 1 comment 1 processing_instruction 1 characters 1 );
 
-## No need for DocTests in this array; we never curry to a doc node event
+## No need for DocSubs in this array; we never curry to a doc node event
 ## because doc node events never occur inside other nodes.
-my @all_curry_tests = qw( EltTests CommentTests PITests TextTests AttrTests NSTests );
+my @all_curry_tests = qw( start_element comment processing_instruction characters attribute namespace );
+
+## TODO: Detect when an axis tries to queue a curried test on to a particular
+## FooSubs, and that test is incompatible with the axis.  Not sure how
+## important that is, but I wanted to note it here for later thought.
 
 sub XFD::PathTest::curry_tests {
     ## we assume that there will *always* be a node test after an axis.
@@ -251,117 +551,789 @@ sub XFD::PathTest::curry_tests {
 }
 
 
+
+sub XFD::PathTest::insert_next_in_to_template {
+    my $self = shift;
+    my ( $template, $next_code ) = @_;
+
+    my ( $preamble, $postamble ) = split /<NEXT>/, $template, 2;
+    return $preamble unless defined $postamble;
+
+    if ( _indentomatic && $preamble =~ s/( *)(?!\n)\Z// ) {
+        _indent $next_code for 1.. length( $1 ) / 2
+    }
+    return join $next_code, $preamble, $postamble;
+}
+
+
 ## "Incremental code" gets evaluated SAX event by SAX event, currying it's
 ## results until future events are received if need be.
 sub XFD::PathTest::as_incr_code {
     my $self = shift;
-    my $action_code = shift;
+    my $context = shift;
 
-    my ( $preamble, $postamble ) = split /<NEXT>/, $self->incr_code_template;
-    return $preamble unless defined $postamble;
+    $self->check_context( $context );
 
-    my $code = defined $self->[_next]
-        ? $self->[_next]->as_incr_code( $action_code )
-        : $$action_code;
+    ## This is the moral equivalent to the principal node type
+    ## from XPath.  Always set by axes.
+    local $context->{PrincipalEventType} = $self->principal_event_type
+        if $self->can( "principal_event_type" );
 
-    if ( _indentomatic && $preamble =~ s/( *)(?!\n)\Z// ) {
-        _indent $code for 1.. length( $1 ) / 4
-    }
-    return join $code, $preamble, $postamble;
+    ## These are the types of events that can make it through a
+    ## path test to the next test.  Usually (always?) set by axes.
+    ## right now an empty array means "any".
+    ## TODO: make sure this is set as accurately as possible; the
+    ## more accurately this is set, the more often we can give
+    ## helpful errors.
+    ## For instance, in non-currying axes, the current set of
+    ## possibles needs to be intersected with this axis' set
+    ## of possibles.
+    my $set_possibles = $self->can( "possible_event_types" );
+    local $context->{PossibleEventTypes} = [ $self->possible_event_types ]
+        if $set_possibles;
+    local $context->{PossiblesSetBy} = $self
+        if $set_possibles;
+    confess "BUG: No _next op and no ActionCode"
+        unless $self->[_next] || $context->{ActionCode};
+
+    $self->insert_next_in_to_template(
+        $self->incr_code_template( $context ),
+        $self->[_next]
+            ? $self->[_next]->as_incr_code( $context )
+            : $context->{ActionCode}
+    );
 }
 
 
 ## "Immediate code" gets evaluated as the expression is evaluated, so
-## it must perform DOM walking (we have no DOM, other than non-children
+## it must perform DOM walking (we have only a minimal DOM: non-children
 ## of elt nodes: attrs and namespace nodes).
+##
+## ARRAY actions are only possible when handed in from outside.  Since
+## immediate code is only used inside function parameters and predicates,
+## it should be impossible for now to see an ARRAY action here.
+##
 sub XFD::PathTest::as_immed_code {
     my $self = shift;
-    my $action_code = shift;
-    my ( $preamble, $postamble ) = split /<NEXT>/, $self->immed_code_template;
-    return $preamble unless defined $postamble;
 
-    if ( _indentomatic && $preamble =~ s/( *)(?!\n)\Z// ) {
-        $action_code = \"$$action_code";
-        _indent $$action_code for 1.. length( $1 ) / 4
-    }
-    my $code = join $$action_code, $preamble, $postamble;
-
-    return defined $self->[_next]
-        ? $self->[_next]->as_immed_code( \$code )
-        : $code;
-
+    return $self->insert_next_in_to_template(
+        $self->immed_code_template,
+        $self->[_next] ? $self->[_next]->as_immed_code( @_ ) : shift()
+    );
 }
 
 
 sub XFD::PathTest::immed_code_template {
-    my $self = shift;
-    my $type = ref $self;
-    $type =~ s/.*://;
-
-    die "Paths containing $type tests not yet allowed in predicates\n";
+    ## Some axes (forward and descendant) need to be precursorized
+    ## when in function calls and expressions.  munge_parms catches
+    ## this and does the precursorization shuffle.
+    die "precursorize THIS\n";
 }
 
+###############################################################################
+## An ExprEval masqeurades as a PathTest so it can be slapped on to the
+## end of a PathTest.  But really, it evaluates the expression and saves
+## the result, then fires the action code.
+   @XFD::ExprEval::ISA = qw( XFD::PathTest );
+sub XFD::ExprEval::as_incr_code {
+    my $self = shift;
+
+    my $boolerizer = "";
+    $boolerizer = " ? true : false"
+        if $self->[0]->result_type eq "boolean";
+
+    my $action_ops = $self->[_next];
+
+    ## Can't use $context->{HighScore} here, all exprs must be evaluated.
+    my $action_id = $action_ops->action_id;
+
+    my $expr_code = get_expr_code( $self->[0], <<CODE_END, $self->[_next], undef, @_ );
+## expression evaluation
+\$ctx->{XValues}->[$action_id] = <EXPR>$boolerizer;
+emit_trace_SAX_message "EventPath: xvalue set to '\$ctx->{XValues}->[$action_id]' for event ", int \$ctx if is_tracing;
+<NEXT>
+# end expression evaluation
+CODE_END
+
+    return $expr_code;
+}
+
+###############################################################################
+##
+## Actions
+##
+
+## If the action is in an op tree that's being precursorized, it needs
+## to return an alternate bit of Perl code (one that sets the precursor)
+## and queue up the action code to be run when enough precursors are
+## defined and the expression is true.
+   @XFD::Action::ISA = qw( XFD::Op );
+sub XFD::Action::result_type { Carp::confess "Actions have no result types" }
+sub XFD::Action::is_constant { 0 }
+sub XFD::Action::curry_tests { return @all_curry_tests }
+
+sub XFD::Action::action_code  { return shift->[0]->{Code}  }
+sub XFD::Action::action_id    { return shift->[0]->{Id}    }
+sub XFD::Action::action_score { return shift->[0]->{Score} }
+
+sub XFD::Action::gate_action {
+    my $self = shift;
+    my $action_code = join shift, "## action\n", "# end action\n";
+    my ( $context ) = @_;
+
+    _indent $action_code if _indentomatic;
+    _indent $action_code if _indentomatic;
+
+    my $id    = $self->action_id;
+    my $score = $self->action_score;
+
+    $action_code = <<CODE_END;
+
+if ( $score > \$ctx->{HighScore} ) {
+  emit_trace_SAX_message "selecting action $id (score $score) for event ", int \$ctx if is_tracing;
+  \$ctx->{HighScore} = $score;
+  \$ctx->{Action} = sub {
+$action_code  };
+}
+CODE_END
+
+    if ( defined $context->{action_wrapper} ) {
+        my $foo = $context->{action_wrapper};
+        _replace_NEXT $foo, $action_code, "<ACTION>";
+        $action_code = $foo;
+    }
+
+    return $action_code unless defined $context->{precursorize_action};
+
+    push @{$context->{precursorized_action_codes}}, $action_code;
+    return $context->{precursorize_action};
+}
+
+
+##########
+   @XFD::Action::PerlCode::ISA = qw( XFD::Action );
+sub XFD::Action::PerlCode::as_incr_code  {
+    my $self = shift;
+    my ( $context ) = @_;
+Carp::confess unless @_;
+    my $action_code = $self->action_code;
+
+    my $action_id = $self->action_id;
+
+    ## TODO: Don't local()ize and set \$cur_self->{XValue} unless need be.
+    return $self->gate_action( <<CODE_END, $context ) ;
+local \$cur_self->{XValue} = \$ctx->{XValues}->[$action_id];
+$action_code
+CODE_END
+}
+
+sub XFD::Action::PerlCode::as_immed_code {
+    goto \&XFD::Action::PerlCode::as_incr_code;
+}
+##########
+   @XFD::SubRules::ISA = qw( XFD::Op );
+sub XFD::SubRules::curry_tests {
+    my $self = shift;
+
+    my %tests;
+
+    for ( @$self ) {
+        for ( $_->curry_tests ) {
+            $tests{$_} = undef;
+        }
+    }
+
+    return keys %tests;
+}
+
+sub XFD::SubRules::as_incr_code {
+    join "", map "## SubRule\n" . $_->as_incr_code( @_ ), @{shift()};
+}
+
+sub XFD::SubRules::as_immed_code {
+    die "The result of an EventPath expression cannot be forwarded to sub rules\n";
+}
+##########
+   @XFD::Action::EventForwarder::ISA = qw( XFD::Action );
+sub XFD::Action::EventForwarder::as_incr_code {
+    my $self = shift;
+    my ( $context ) = @_;
+Carp::confess unless @_;
+
+    my $new_handler_expr = $self->action_code;
+
+    ## TODO: only forward end events if this op's not in start-element::
+    ## or end-element:: context and is intercepting a start_document or
+    ## start_element.
+    return $self->gate_action( <<CODE_END, $context );
+{
+  my \$event_type = \$ctx->{EventType};
+  my \$h = $new_handler_expr;
+
+  if ( ! \$cur_self->{DocStartedFlags}->{\$h} ) {
+    \$cur_self->{DocStartedFlags}->{\$h} = 1;
+    if ( \$event_type ne "start_document"
+      && ! \$cur_self->{SuppressAutoStartDocument}
+    ) {
+      push \@{\$cur_self->{AutoStartedHandlers}}, \$h;
+      \$h->start_document( {} );
+    }
+  }
+
+  \$cur_self->{LastHandlerResult} = \$h->\$event_type( \$ctx->{Node} );
+
+  if ( substr( \$event_type, 0, 6 ) eq "start_" ) {
+    push \@{\$ctx->{EndSubs}}, [
+      sub {
+        my ( \$h ) = \@_;
+        my \$event_type = \$ctx->{EventType};
+        \$cur_self->{LastHandlerResult} = \$h->\$event_type( \$ctx->{Node} );
+      },
+      \$h
+    ];
+  }
+}
+CODE_END
+}
+
+sub XFD::Action::EventForwarder::as_immed_code {
+    ## TODO: make it so node-set returning functions can be.
+    ## TODO: Allow other things to be forwarded as characters()
+    die "The result of an EventPath expression cannot be forwarded to a SAX handler\n";
+}
+
+##########
+   @XFD::Action::EventCutter::ISA = qw( XFD::Action );
+sub XFD::Action::EventCutter::as_incr_code {
+    my $self = shift;
+    my ( $context ) = @_;
+
+    my $cut_list_expr = $self->action_code;
+
+    ## TODO: only forward trees if this op's not in start-element::
+    ## or end-element:: context and is intercepting a start_document or
+    ## start_element.
+    return $self->gate_action( <<CODE_END, $context );
+if ( is_tracing ) {
+  my \$c = $cut_list_expr;
+  for my \$h ( \@\$c ) {
+    emit_trace_SAX_message "EventPath: cutting from handler \$h";
+  }
+}
+CODE_END
+}
+
+sub XFD::Action::EventCutter::as_immed_code {
+    ## TODO: make it so node-set returning functions can be.
+    ## TODO: Allow other things to be forwarded as characters()
+    die "The result of an EventPath expression cannot be forwarded to a SAX handler\n";
+}
+
+##########
+sub action {
+    my $action = shift;
+
+    my $action_type = ref $action ;
+
+    if ( $action_type eq "ARRAY" ) {
+        ## It's s nested list of rules.
+        my @rules = @$action;
+
+        die "Odd number of elements in action ARRAY\n"
+            if @rules % 1;
+        
+        my @action_ops;
+        while ( @rules ) {
+            my ( $expr, $action ) = ( shift @rules, shift @rules );
+            push @action_ops, XML::Filter::Dispatcher::Parser->_parse(
+                $expr,
+                $action,
+                $dispatcher, ## TODO: pass options here.
+            );
+        }
+        
+        return XFD::SubRules->new( @action_ops );
+    }
+
+    ## It's a real action, not a set of subrules.
+
+    push @{$dispatcher->{Actions}}, my $a_hash = {};
+    my $action_num = $#{$dispatcher->{Actions}};
+    $a_hash->{Id} = $action_num;
+
+    ## TODO: Allow a HASH to be passed in so the caller can set the score
+    ## directly, or perhaps set a score increment.
+    $a_hash->{Score} = $action_num;
+
+    if ( ! defined $action || $action_type eq "SCALAR" ) {
+        $a_hash->{Code} = defined $action ? $action : "undef";
+        return XFD::Action::PerlCode->new( $a_hash ),
+    }
+
+    if ( !$action_type ) {
+        ## TODO: allow multiple handler names?
+        my $handler_name = $action;
+        die "Unknown handler name '$handler_name', ",
+            keys %{$dispatcher->{Handlers}}
+                ? (
+                    "known handlers: ",
+                    join ", ", map "'$_'",
+                        keys %{$dispatcher->{Handlers}}
+                )
+                : "no handlers were set in constructor call",
+            "\n"
+            unless defined $dispatcher->{Handlers}->{$handler_name};
+
+        $handler_name =~ s/([\\'])/\\$1/g;
+
+        $a_hash->{Code} = "\$cur_self->{Handlers}->{'$handler_name'}";
+
+        return XFD::Action::EventForwarder->new( $a_hash );
+    }
+
+    if ( $action_type eq "CODE" ) {
+        ## It's a code ref, arrange for it to be called
+        ## directly.
+        $a_hash->{CodeRef} = $action;
+        $a_hash->{Code} =
+            "\$cur_self->{Actions}[$action_num]->{CodeRef}->( \$cur_self, \$ctx->{Node} )";
+        return XFD::Action::PerlCode->new( $a_hash );
+    }
+
+    if (
+        ## Crude way of eliminating most common ref types and deciding
+        ## that the action is a blessed object.
+        $action_type ne "HASH"
+        && $action_type ne "REF"
+        && $action_type ne "Regexp"
+    ) {
+        ## Must be a SAX handler, make up some action code to
+        ## install it and arrange for it's removal.
+        $a_hash->{Handler} = $action;
+        $a_hash->{Code} = "\$cur_self->{Actions}->[$action_num]->{Handler}";
+        return XFD::Action::EventForwarder->new( $a_hash );
+    }
+
+    confess
+        "action is a ", ref $action, " ref, not a SCALAR or ARRAY ref.";
+}
+
+
+
+###############################################################################
+##
+## Misc
+##
+
+## When an expression has been precursorized, it needs to run the
+## relative path precursors wherever the expression was to be run,
+## when enough precursors are satisfied, then the expression can
+## run.  This happens in predicates and when a function call or
+## math/logical operator (not union) is the main expression.
+sub get_expr_code {  ## TODO: rename this
+    my ( $expr, $action_template, $action_ops, $path_remainder, $context ) = @_;
+
+    local $context->{Precursors};
+
+    my $expr_code   = $expr->as_immed_code( $context );
+
+    my $action_code = $action_template;
+    _replace_NEXT $action_code, $expr_code, "<EXPR>";
+    _replace_NEXT $action_code, $action_ops->as_incr_code( $context )
+        if $action_ops;
+
+    unless ( $context->{Precursors} ) {
+        _replace_NEXT $action_code, $path_remainder->as_incr_code( $context )
+            if $path_remainder;
+
+        ## Return an immediate expression if no precursors were added.
+        return $action_code
+    }
+
+    ## Some part of the expression was precursorized.  inline all
+    ## relative precursors.
+    my @inline_precursor_codes;
+
+    my %precursor_context = %$context;
+    for my $precursor_number ( 0..$#{$context->{Precursors}} ) {
+        if ( _is_rel_path $context->{Precursors}->[$precursor_number] ) {
+            my $code = $context->{Precursors}->[$precursor_number]->as_incr_code(
+                \%precursor_context
+            );
+            _indent $code if _indentomatic;
+            push @inline_precursor_codes,
+                "\n## relative precursor $precursor_number\n$code";
+            undef $context->{Precursors}->[$precursor_number];
+        }
+    }
+
+    my $postponement_init_code;
+
+    if ( $path_remainder ) {
+        if ( ! defined $context->{precursorize_action} ) {
+            ## this is the leftmost predicate expression
+            die "ARGH!" if $context->{precursorized_action_codes};
+            local $context->{precursorized_action_codes} = [];
+            local $context->{precursorize_action} = <<CODE_END;
+{
+  emit_trace_SAX_message "EventPath: adding context node ", int \$ctx, " to postponement ", int \$postponement if is_tracing;
+  push \@{\$ctx->{Postponements}}, \$postponement;
+  push \@{\$postponement->[_p_contexts]}, \$ctx;
+}
+CODE_END
+
+            $context->{action_wrapper} = <<CODE_END;
+while ( my \$ctx = shift \@{\$postponement->[_p_contexts]} ) {
+  <ACTION>}
+CODE_END
+
+            my $code = $path_remainder->as_incr_code( $context );
+            _indent $code if _indentomatic;
+            push @inline_precursor_codes,
+                "\n## remainder of location path\n$code";
+
+            _replace_NEXT $action_code, join "", @{$context->{precursorized_action_codes}};
+
+            _indent $action_code if _indentomatic;
+            _indent $action_code if _indentomatic;
+
+            $postponement_init_code = <<CODE_END;
+\$postponement = [ undef ];
+emit_trace_SAX_message "EventPath: creating postponement ", int \$postponement, " for leftmost predicate in event ", int \$ctx if is_tracing;
+CODE_END
+
+            $action_code = <<CODE_END;
+emit_trace_SAX_message "EventPath: queuing check sub for postponement ", int \$postponement if is_tracing;
+push \@{\$ctx->{EndSubs}}, [
+  sub {
+    ## Called to see if the leftmost predicate matched
+    my ( \$ctx, \$postponement ) = \@_;
+    emit_trace_SAX_message "EventPath: checking postponement ", int \$postponement, " for leftmost predicate in event ", int \$ctx if is_tracing;
+    for my \$ctx ( \@{\$postponement->[_p_contexts]} ) {
+      \@{\$ctx->{Postponements}} = grep \$_ != \$postponement, \@{\$ctx->{Postponements}};
+      emit_trace_SAX_message \@{\$ctx->{Postponements}} . " postponements left in event ", int \$ctx, ": (", join( ", ", map int \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
+    }
+$action_code  },
+  \$ctx,
+  \$postponement
+];
+CODE_END
+
+        }
+        else {
+            ## It's a non-leftmost predicate.
+
+            my $code = $path_remainder->as_incr_code( $context );
+            _indent $code if _indentomatic;
+            push @inline_precursor_codes,
+                "\n## remainder of location path\n$code";
+
+            $postponement_init_code = <<CODE_END;
+my \$parent_postponement = \$postponement;
+\$postponement = [ \$parent_postponement ];
+emit_trace_SAX_message "EventPath: creating postponement ", int \$postponement, " for predicate (non-leftmost) in event ", int \$ctx if is_tracing;
+CODE_END
+
+            _replace_NEXT $action_code, <<CODE_END;
+if ( \$postponement->[_p_contexts] ) {
+  for my \$ctx ( \@{\$postponement->[_p_contexts]} ) {
+    emit_trace_SAX_message "EventPath: adding context node ", int \$ctx, " from postponement ", int \$postponement, " to parent postponement ", int \$parent_postponement if is_tracing;
+    push \@{\$ctx->{Postponements}}, \$parent_postponement;
+    \@{\$ctx->{Postponements}} = grep \$_ != \$postponement, \@{\$ctx->{Postponements}};
+    push \@{\$parent_postponement->[_p_contexts]}, \$ctx;
+    emit_trace_SAX_message \@{\$ctx->{Postponements}} . " postponements now in event ", int \$ctx, ": (", join( ", ", map int \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
+  }
+}
+CODE_END
+
+            _indent $action_code if _indentomatic;
+            _indent $action_code if _indentomatic;
+            $action_code = <<CODE_END;
+push \@{\$ctx->{EndSubs}}, [
+  sub {
+    ## Called to see if a non-leftmost predicate matched
+    my ( \$ctx, \$parent_postponement, \$postponement ) = \@_;
+    emit_trace_SAX_message "EventPath: checking postponement ", int \$postponement, " for predicate (non-leftmost)" if is_tracing;
+    for my \$ctx ( \@{\$postponement->[_p_contexts]} ) {
+      \@{\$ctx->{Postponements}} = grep \$_ != \$postponement, \@{\$ctx->{Postponements}};
+      emit_trace_SAX_message \@{\$ctx->{Postponements}} . " postponements left in event ", int \$ctx, ": (", join( ", ", map int \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
+    }
+$action_code  },
+  \$ctx,
+  \$parent_postponement,
+  \$postponement
+];
+CODE_END
+        }
+    }
+    else {
+        ## It's an expression, not a predicate
+        _indent $action_code if _indentomatic;
+        _indent $action_code if _indentomatic;
+        $postponement_init_code = <<CODE_END;
+\$postponement = [ undef ];
+emit_trace_SAX_message "EventPath: creating postponement ", int \$postponement, " for expression in event ", int \$ctx if is_tracing;
+CODE_END
+
+        $action_code = <<CODE_END;
+push \@{\$ctx->{Postponements}}, \$postponement;
+push \@{\$ctx->{EndSubs}}, [
+  sub {
+    ## Called to calculate the postponed expression.
+    my ( \$ctx, \$postponement ) = \@_;
+    emit_trace_SAX_message "EventPath: checking postponement ", int \$postponement, " in event ", int \$ctx if is_tracing;
+    \@{\$ctx->{Postponements}} = grep \$_ != \$postponement,
+      \@{\$ctx->{Postponements}};
+    emit_trace_SAX_message \@{\$ctx->{Postponements}} . " postponements left in event ", int \$ctx, ": (", join( ", ", map int \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
+$action_code  },
+  \$ctx,
+  \$postponement
+];
+CODE_END
+    }
+
+#    my $code = $self->insert_next_in_to_template( <<CODE_END );
+## TODO: figure a way for the absolute precursors to fire this expression.
+
+    local $" = "";
+    my $code = <<CODE_END;
+$postponement_init_code@inline_precursor_codes
+$action_code
+CODE_END
+
+    return $code;
+}
+
+###############################################################################
+##
+## Functions
+##
+
+## Boolean functions return 0 or 1, it's up to expr_eval (or any
+## other code which passes these in or out to perl code) to convert
+## these to true() or false().  Passing these in/out of this subsystem
+## is far rarer than using them within it. Using 1 or 0 lets
+## the optimization code and the generated use numeric or boolean
+## Perl ops.
+
+## When compiled, expressions and function calls are turned in to
+## Perl code right in the grammar, with a vew exceptions like
+## string( node-set ).
+
+## The parser calls this
+sub function {
+    my ( $name, $parms ) = @_;
+    
+    no strict 'refs';
+
+    ## prevent ppl from spelling then "foo_bar"
+    my $real_name = $name;
+    my $had_underscores = $real_name =~ s/_/*NO-UNDERSCORES-PLEASE*/g;
+    $real_name =~ s/-/_/g;
+
+    unless ( "XFD::Function::$real_name"->can( "new" ) ) {
+        if ( $had_underscores ) {
+            if ( $had_underscores ) {
+                $real_name = $name;
+                $real_name =~ s/-/_/g;
+                if ( defined &{"XFD::Function::$real_name"} ) {
+                    die
+                "XPath function mispelled, use '-' instead of '_' in '$name'\n";
+                }
+            }
+        }
+        die "unknown XPath function '$name'\n";
+    }
+
+    return "XFD::Function::$real_name"->new( @$parms );
+}
+
+
+## Many XPath functions use a node set of the context node when
+## no args are provided.
+sub _default_to_context {
+    my $args = shift;
+    return $args if @$args;
+
+    my $s = XFD::Axis::self->new;
+    my $n = XFD::EventType::node->new;
+    $s->set_next( $n );
+    return [ $s ];
+}
+
+
+####################
+@XFD::Function::ISA = qw( XFD::Op );
+
+
+   @XFD::BooleanFunction::ISA          = qw( XFD::Function );
+sub XFD::BooleanFunction::result_type  { "boolean" }
+sub XFD::BooleanFunction::parm_type    { "boolean" }
+   @XFD::NodesetFunction::ISA          = qw( XFD::Function );
+sub XFD::NodesetFunction::result_type  { "string" }
+sub XFD::NodesetFunction::parm_type    { "nodeset" }
+   @XFD::NumericFunction::ISA          = qw( XFD::Function );
+sub XFD::NumericFunction::result_type  { "number"  }
+sub XFD::NumericFunction::parm_type    { "number"  }
+   @XFD::StringFunction::ISA           = qw( XFD::Function );
+sub XFD::StringFunction::result_type   { "string"  }
+sub XFD::StringFunction::parm_type     { "string"  }
+
+sub XFD::Function::op_type { shift->XFD::Op::op_type . "()" }
+
+##
+## NOTE: munge_parms is where all the precursor detection magic occurs.
+## A precursor is detected when a parameter to a function (or operator)
+## queues up one or more precursors when converted to immediate code.
+## By definition, a precursor can't be executed immediately.
+##
+sub XFD::Function::munge_parms {
+    ## police parms and convert to appropriate type as needed.
+    my $self = shift;
+    my ( $min, $max, $context ) = @_;
+
+    ( my $sub_name = ref $self ) =~ s/.*://;
+
+    die "$min > $max!!\n" if defined $max && $min > $max;
+
+    my $msg;
+    my $cnt = @$self;
+    if ( defined $max && $max == $min ) {
+        $msg = "takes $min parameters" unless $cnt == $min;
+    }
+    elsif ( $cnt < $min ) {
+        $msg = "takes at least $min parameters";
+    }
+    elsif ( defined $max && $cnt > $max ) {
+        $msg = "takes at most $max parameters";
+    }
+
+    my @errors;
+    push @errors, "$sub_name() $msg, got $cnt\n"
+        if defined $msg;
+    my $num = 0;
+
+    my @parm_codes;
+
+    for my $parm ( @$self ) {
+        my $required_type = $self->parm_type( $num );
+        ++$num;
+
+        my $type = $parm->result_type;
+
+        if ( $type ne $required_type
+            || ( $type eq "nodeset" && $required_type eq "nodeset" )
+        ) {
+            my $cvt = "XFD::${type}2$required_type";
+            if ( $cvt->can( "new" ) ) {
+                $parm = $cvt->new( $parm );
+            }
+            else {
+                push @errors,
+                    "Can't convert ",
+                    $type,
+                    " to ",
+                    $required_type,
+                    " in ",
+                    $sub_name,
+                    "() parameter ",
+                    $num,
+                    "\n"
+            }
+        }
+
+        push @parm_codes, $parm->as_immed_code( $context );
+    }
+
+    die @errors if @errors;
+
+    return @parm_codes;
+}
+
+
+sub XFD::Function::build_expr {
+    my $self = shift;
+    my ( undef, undef, $context ) = @_;
+
+    my $code_sub = pop;
+    my $code = $code_sub->( $self->munge_parms( @_ ) );
+
+    $code = _eval_at_compile_time $self->result_type, $code, $context
+        if $self->is_constant;
+        
+    return $code;
+}
 
 ###############################################################################
 ##
 ## Type Converters
 ##
+@XFD::Converter::ISA = qw( XFD::Function );
 
-## NOTE: these do not take/return blessed refs, since they tend to be used
-## internally where the result type is known and reffing/dereffing would be
-## inconvenient.
+sub XFD::Converter::result_type { ( my $foo = ref shift ) =~ s/.*2//; $foo }
+
+sub XFD::Converter::as_immed_code {
+    my $self = shift;
+
+    my $code = $self->immed_code_template;
+
+    my $parm = $self->[0];
+Carp::confess unless defined $parm;
+    _replace_NEXT $code, $parm->as_immed_code( @_ );
+
+    return $code;
+}
+
 
 ## NaN is not handled properly.
 
-sub _boolean2number {
-    my $boolean_expr = shift;
-
+   @XFD::boolean2number::ISA = qw( XFD::Converter );
+sub XFD::boolean2number::immed_code_template {
     ## Internally, booleans are numeric, force them to 0 or 1.
-    return "$boolean_expr ? 1 : 0";
+    return "<NEXT> ? 1 : 0";
 }
 
-sub _boolean2string {
-    my $boolean_expr = shift;
-
+   @XFD::boolean2string::ISA = qw( XFD::Converter );
+sub XFD::boolean2string::immed_code_template {
     ## Internally, booleans are numeric
-    return "( $boolean_expr ? 'true' : 'false' )";
+    return "( <NEXT> ? 'true' : 'false' )";
 }
 
 ## "int" is used internally to get things rounded right.
-sub _number2int {
-    my $numeric_expr= shift;
+   @XFD::number2int::ISA = qw( XFD::Converter );
+sub XFD::number2int::result_type { "number" }
+sub XFD::number2int::immed_code_template {
     require POSIX;
-    return "POSIX::floor( $numeric_expr + 0.5 )";
+    return "POSIX::floor( <NEXT> + 0.5 )";
 }
 
-sub _number2string  {
-    my $numeric_expr= shift;
+   @XFD::number2string::ISA = qw( XFD::Converter );
+sub XFD::number2string::immed_code_template  {
     ## The 0+ is to force the scalar in to a numeric format, so to
     ## trim leading zeros.  This will have the side effect that any
     ## numbers that don't "fit" in to the local machine's notion of
     ## a floating point Perl scaler will be munged to the closest
     ## approximation, but hey...
     return
-        "do { my \$n = $numeric_expr; ( \$n ne 'NaN' ? 0+\$n : \$n ) }";
+        "do { my \$n = <NEXT>; ( \$n ne 'NaN' ? 0+\$n : \$n ) }";
 }
 
-sub _number2boolean {
-    my $numeric_expr= shift;
+   @XFD::number2boolean::ISA = qw( XFD::Converter );
+sub XFD::number2boolean::immed_code_template {
     return
-       "do { my \$n = $numeric_expr; ( \$n ne 'NaN' && \$n ) ? 1 : 0 }";
+       "do { my \$n = <NEXT>; ( \$n ne 'NaN' && \$n ) ? 1 : 0 }";
 }
 
-sub _string2boolean {
-    my $string_expr= shift;
-    return "( length $string_expr ? 1 : 0 )";
+   @XFD::string2boolean::ISA = qw( XFD::Converter );
+sub XFD::string2boolean::immed_code_template {
+    return "( length <NEXT> ? 1 : 0 )";
 }
 
-sub _string2number {
-    my $string_expr= shift;
-
+   @XFD::string2number::ISA = qw( XFD::Converter );
+sub XFD::string2number::immed_code_template {
     ## The "0+" forces it to a number, hopefully it was a number
     ## the local machine's perl can represent accurately.
-    return qq{do { my \$s = $string_expr; _looks_numeric \$s ? 0+\$s : die "can't convert '\$s' to a number in XPath expression"}};
+    return qq{do { my \$s = <NEXT>; _looks_numeric \$s ? 0+\$s : die "can't convert '\$s' to a number in XPath expression"}};
 }
 
 ## the any2..._rt are used at runtime when we have no idea at compile time
@@ -376,14 +1348,15 @@ sub _any2boolean_rt {
 
     my $value = $$any_value;
 
-    return $value if $type eq "boolean";
-    return $value ? 1 : 0 if $type eq "number";
+    return $value                   if $type eq "boolean";
+    return $value ? 1 : 0           if $type eq "number";
     return length( $value ) ? 1 : 0 if $type eq "string";
 
     die "Can't convert '$type' to boolean\n";
 }
 
-sub _any2boolean { "_any2boolean_rt( $_[0] )" }
+   @XFD::any2boolean::ISA = qw( XFD::Converter );
+sub XFD::any2boolean::immed_code_template { "_any2boolean_rt( <NEXT> )" }
 ##########
 sub _any2string_rt {
     my $any_value = shift;
@@ -407,7 +1380,8 @@ sub _any2string_rt {
     die "Can't convert '$type' to string\n";
 }
 
-sub _any2string { "_any2string_rt( $_[0] )" }
+   @XFD::any2string::ISA = qw( XFD::Converter );
+sub XFD::any2string::immed_code_template { "_any2string_rt( <NEXT> )" }
 ##########
 sub _any2number_rt {
     my $any_value = shift;
@@ -434,633 +1408,598 @@ sub _any2number_rt {
     die "Can't convert '$type' to number\n";
 }
 
-sub _any2number { "_any2number_rt( $_[0] )" }
-################################################################################
-##
-## Compile-time constant folding
-##
-## By tracking what values and expressions are constant, we can use
-## eval "" to evaluate things at compile time.
-##
-sub _eval_at_compile_time {
-    my ( $type, $code ) = @_;
-
-    return $code unless $fold_constants;
-
-    my $out_code = eval $code;
-    die "$@ in XPath compile-time execution of ($type) \"$code\"\n"
-        if $@;
-
-    ## Perl's bool ops ret. "" for F
-    $out_code = "0"
-        if $type eq "boolean" && !length $out_code;
-    $out_code = $$out_code if ref $out_code;
-    if ( $type eq "string" ) {
-        $out_code =~ s/([\\'])/\\$1/g;
-        $out_code = "'$out_code'";
-    }
-
-    #warn "compiled `$code` to `$out_code`";
-    return $out_code;
-}
-
+   @XFD::any2number::ISA = qw( XFD::Converter );
+sub XFD::any2number::immed_code_template { "_any2number_rt( <NEXT> )" }
 ########################################
 ##
-## node2foo_converter classes
+## nodeset2foo converters
 ##
-## These are PathTests because they need to monkey with the action code
-## to do the required conversion and stuff the result in ExpressionResult
-## so the precursor logic can pick it up and stuff it in the correct
-## precursor value slot.
-##
-## These are only used for grabbing the results of precursors and
-## turning them in to scalars so the main expression can run.
-##
-@XFD::Converter::ISA = qw( XFD::PathTest );
 
-sub XFD::Converter::as_immed_code {
-    ## We need to convert from the normal path test semantics to
-    ## value-returning semantics.  So, unlike most PathTests'
-    ## as_immed_code(), Converters' as_immed_code()s need to
-    ## take the result of the path test and return it.  This ends
-    ## up behaving a lot like how PathTest::as_incr_code(),
-    ## except it calls _next->as_immed_code() on \$ctx.
-    my $self = shift;
-
-    my ( $preamble, $postamble ) = split /<NEXT>/, $self->immed_code_template;
-    return $preamble unless defined $postamble;
-
-    unless ( $self->[_next] ) {
-        my $type = ref $self;
-        $type =~ s/.*://;
-        die "BUG: $type needs a next!\n"
-    }
-
-    my $code = $self->[_next]->as_immed_code( \"( \$ctx )" );
-
-    if ( _indentomatic && $preamble =~ s/( *)(?!\n)\Z// ) {
-        _indent $code for 1.. length( $1 ) / 4
-    }
-
-    return join $code, $preamble, $postamble;
+   @XFD::NodesetConverter::ISA = qw( XFD::Converter );
+sub XFD::NodesetConverter::result_type { ( ( ref shift ) =~ m/2(.*)/ )[0] }
+sub XFD::NodesetConverter::incr_code_template {
+    Carp::confess( ref shift ) . " cannot generate incremental code";
 }
 
-
-@XFD::node2string_converter::ISA = qw( XFD::Converter );
-
-sub XFD::node2string_converter::as_incr_code {
+sub XFD::NodesetConverter::as_immed_code {
     my $self = shift;
+    my ( $context ) = @_;
 
-    ## We need to run some code as the action, some of
-    ## which calls the real action.  So, fool SUPER::as_incr_code
-    ## in to thinking we're at the end of the chain for a
-    ## moment and get it to build our action for us,
-    ## then pass that down the chain to get the real
-    ## action.
-    my $fake_action_code = do {
-        local $self->[_next] = undef;
-        package XFD::node2string_converter;
-        $self->SUPER::as_incr_code( @_ );
+    my $expr_code = eval {
+        $self->[0]->XFD::Converter::as_immed_code
     };
 
-    return $self->[_next]->as_incr_code( \$fake_action_code );
-}
-
-sub XFD::node2string_converter::incr_code_template {
-    my $self = shift;
-
-    ## This is actually passed down the chain as the action code,
-    ## with the *real* action code already subbed in to the
-    ## <NEXT>. (normally the next test's output would contain
-    ## the action and go in <NEXT>).
-    return <<CODE_END;
-if ( \$ctx->{IsStartEvent} ) {
-    if ( \$ctx->{NodeType} ne "attribute" ) {
-        ## Flag the child context so all descendant
-        ## text is accumulated.
-        \$child_ctx->{Text} = "" unless exists \$child_ctx->{Text};
+    if ( defined $expr_code ) {
+        my $code = $self->immed_code_template;
+        _replace_NEXT $code, $expr_code;
+        return $code;
     }
+    die $@ unless $@ eq "precursorize THIS\n";
+
+    my ( $postponer_class )
+        = "XFD::" . ucfirst( $self->result_type ) . "Postponer";
+
+    my $precursor_number = $#{$context->{Precursors}} + 1;
+
+    my $postponer = $postponer_class->new( $precursor_number );
+
+    $postponer->set_next( $self->[0] );
+
+    push @{$context->{Precursors}}, $postponer;
+
+    return $self->precursor_fetching_code( $precursor_number );
 }
 
-if ( \$ctx->{IsEndEvent} ) {
-    \$d->{ExpressionResult} = ( \$ctx->{NodeType} eq "attribute" )
-        ? \$ctx->{Node}->{Value}
-        : \$child_ctx->{Text};
-    <NEXT>
+
+##
+## When a NodesetConverter notices that it's nodeset expression
+## needs to be precursorized, it places one of these at the
+## head of the location path to manage precursorization.
+## This allows a boolean conversion to operate differently than
+## a string/numeric one, for instance.
+##
+## TODO: Allow these to signal the enclosing path test to not
+## re-curry itself if the precursor has been satisfied.
+sub _np_precursor_number() { 0 }
+   @XFD::NodesetPostponer::ISA = qw( XFD::PathTest );
+sub XFD::NodesetPostponer::as_incr_code {
+    my $self = shift;
+    my $context = shift;
+    local $context->{ActionCode} = $self->postponement_setting_code;
+    my $code = $self->[_next]->as_incr_code( $context );
+    return $code;
 }
+sub XFD::NodesetPostponer::postponement_setting_code {
+    ## This is overridden by number, string, boolean postponers
+    my $self = shift;
+    my $precursor_number = $self->[_np_precursor_number];
+    return <<CODE_END;
+emit_trace_SAX_message "EventPath: Setting postponement for precursor $precursor_number" if is_tracing;
+\$postponement->[_p_first_precursor+$precursor_number] = \$ctx; ## Nodeset postponer
 CODE_END
 }
 
-## TODO: Someday we won't be able to assume the dern nodesets are
-## in document order
-## TODO: Don't assume that this is an attribute here.
-sub XFD::node2string_converter::immed_code_template {
+
+##########
+@XFD::nodeset2string::ISA = qw( XFD::NodesetConverter );
+sub XFD::nodeset2string::immed_code_template {
+    ## This is used in cases where the location path can be
+    ## evaluated immediately.
     return <<CODE_END;
-do { ## node2string
-    my \@ctxs = (
-        <NEXT>
+do { ## nodeset2string
+  my \$ctx = (
+    <NEXT>
+  )[0];
+  exists \$ctx->{Node}->{Value}
+    ? \$ctx->{Node}->{Value}
+    : "";
+} # nodeset2string
+CODE_END
+}
+
+
+sub XFD::nodeset2string::precursor_fetching_code {
+    my $self = shift;
+    my ( $precursor_number ) = @_;
+
+    return qq{(
+  defined \$postponement->[_p_first_precursor+$precursor_number]
+        ? \$postponement->[_p_first_precursor+$precursor_number]
+        : ""
+)};
+}
+
+
+   @XFD::StringPostponer::ISA = qw( XFD::NodesetPostponer );
+sub XFD::StringPostponer::postponement_setting_code {
+    my $self = shift;
+    my $precursor_number = $self->[_np_precursor_number];
+    return <<CODE_END;
+unless ( defined \$postponement->[_p_first_precursor+$precursor_number] ) { ## nodeset2string
+  if ( \$ctx->{EventType} eq "start_document"
+    || \$ctx->{EventType} eq "start_element"
+  ) {
+    emit_trace_SAX_message "EventPath: enabling text collection for precursor $precursor_number (postponement ", int \$postponement, ")" if is_tracing;
+    nodeset2string_start( \$postponement, $precursor_number );
+    ## If this is one branch of a union, we need to define this
+    ## precursor so the other branch of the union won't also
+    ## start collecting text.
+    \$postponement->[_p_first_precursor+$precursor_number] = "";
+  }
+  else {
+    emit_trace_SAX_message "EventPath: setting precursor $precursor_number to string" if is_tracing;
+    my \$type = \$ctx->{EventType};
+    \$postponement->[_p_first_precursor+$precursor_number] = (
+        \$type eq "attribute"              ? \$ctx->{Node}->{Value}
+                                          : \$ctx->{Node}->{Data}
     );
-    \@ctxs && exists \$ctxs[0]->{Node}->{Value}
-        ? \$ctxs[0]->{Node}->{Value}
-        : "";
-} # node2string
+    \$postponement->[_p_first_precursor+$precursor_number] = ""
+      unless defined \$postponement->[_p_first_precursor+$precursor_number];
+  }
+} # nodeset2string
 CODE_END
 }
 
 ##########
-@XFD::node2number_converter::ISA = qw( XFD::Converter );
+@XFD::nodeset2hash::ISA = qw( XFD::NodesetConverter );
+sub XFD::nodeset2hash::immed_code_template {
+    ## This is used in cases where the location path can be
+    ## evaluated immediately.
+    die "nodeset2hash::immed_code_template not implemented yet\n";
+    return <<CODE_END;
+do { ## nodeset2hash
+  my \$ctx = (
+    <NEXT>
+  )[0];
+  exists \$ctx->{Node}->{Value}
+    ? \$ctx->{Node}->{Value}
+    : "";
+} # nodeset2hash
+CODE_END
+}
 
-sub XFD::node2number_converter::new {
-    my $self = shift->XFD::PathTest::new( @_ );
-    $self->[_next] = XFD::node2string_converter->new;
+
+sub XFD::nodeset2hash::precursor_fetching_code {
+    my $self = shift;
+    my ( $precursor_number ) = @_;
+
+    return qq{\$postponement->[_p_first_precursor+$precursor_number]->end_document};
+}
+
+   @XFD::HashPostponer::ISA = qw( XFD::NodesetPostponer );
+sub XFD::HashPostponer::postponement_setting_code {
+    my $self = shift;
+    my $precursor_number = $self->[_np_precursor_number];
+    ## TODO: check to see if we really need this if EventType eq ... stuff
+    ## it should be known at compile time, perhaps even just by dint of us
+    ## setting the acceptable events for this opcode to be queued for.
+    return <<CODE_END;
+unless ( defined \$postponement->[_p_first_precursor+$precursor_number] ) { ## nodeset2hash
+  if ( \$ctx->{EventType} eq "start_document"
+    || \$ctx->{EventType} eq "start_element"
+  ) {
+    ## Note that, if this is one branch of a union, defining this
+    ## precursor prevents the other branch of the union from also
+    ## building a hash over top of this one.
+    ## TODO: allow the caller to specify this class name
+    require XML::Filter::Dispatcher::AsHashHandler;
+    \$XFD::AsHashHandlers[0] ||= XML::Filter::Dispatcher::AsHashHandler->new;
+    my \$h = \$postponement->[_p_first_precursor+$precursor_number] =
+        shift \@XFD::AsHashHandlers;
+
+    \$h->set_namespaces( \$cur_self->{Namespaces} ? %{ \$cur_self->{Namespaces} } : () );
+
+    emit_trace_SAX_message "EventPath: precursor $precursor_number is handled by \$h" if is_tracing;
+
+    \$h->start_document( {} );  ## superfluous in the current version, but just in case...
+
+    my \$end_element = \$h->can( "end_element" );
+    ## nodeset2hash_start() will queue up the matching end_element
+    \$h->start_element( \$ctx->{Node} )
+      if \$ctx->{EventType} eq "start_element";
+
+    nodeset2hash_start(
+      \$h,
+      \$h->can( "start_element" ),
+      \$h->can( "characters"    ),
+      \$end_element,
+    );
+
+    push \@{\$ctx->{EndSubs}}, [
+      sub {
+        unshift \@XFD::AsHashHandlers, shift;
+      },
+      \$h,
+    ];
+  }
+  else {
+    ## TODO: do this at compile time.
+    die "EventPath function hash() requires a start_element or start_document\n";
+  }
+} # nodeset2hash
+CODE_END
+}
+
+##########
+@XFD::nodeset2struct::ISA = qw( XFD::NodesetConverter );
+sub XFD::nodeset2struct::immed_code_template {
+    ## This is used in cases where the location path can be
+    ## evaluated immediately.
+    die "nodeset2struct::immed_code_template not implemented yet\n";
+    return <<CODE_END;
+do { ## nodeset2struct
+  my \$ctx = (
+    <NEXT>
+  )[0];
+  exists \$ctx->{Node}->{Value}
+    ? \$ctx->{Node}->{Value}
+    : "";
+} # nodeset2struct
+CODE_END
+}
+
+
+sub XFD::nodeset2struct::precursor_fetching_code {
+    my $self = shift;
+    my ( $precursor_number ) = @_;
+
+    return qq{\$postponement->[_p_first_precursor+$precursor_number]->end_document};
+}
+
+   @XFD::StructPostponer::ISA = qw( XFD::NodesetPostponer );
+sub XFD::StructPostponer::postponement_setting_code {
+    my $self = shift;
+    my $precursor_number = $self->[_np_precursor_number];
+    ## TODO: check to see if we really need this if EventType eq ... stuff
+    ## it should be known at compile time, perhaps even just by dint of us
+    ## setting the acceptable events for this opcode to be queued for.
+    return <<CODE_END;
+unless ( defined \$postponement->[_p_first_precursor+$precursor_number] ) { ## nodeset2struct
+  if ( \$ctx->{EventType} eq "start_document"
+    || \$ctx->{EventType} eq "start_element"
+  ) {
+    ## Note that, if this is one branch of a union, defining this
+    ## precursor prevents the other branch of the union from also
+    ## building a struct over top of this one.
+    ## TODO: allow the caller to specify this class name
+    require XML::Filter::Dispatcher::AsStructHandler;
+    \$XFD::AsStructHandlers[0] ||= XML::Filter::Dispatcher::AsStructHandler->new;
+    my \$h = \$postponement->[_p_first_precursor+$precursor_number] =
+        shift \@XFD::AsStructHandlers;
+
+    \$h->set_namespaces( \$cur_self->{Namespaces} ? %{ \$cur_self->{Namespaces} } : () );
+
+    emit_trace_SAX_message "EventPath: precursor $precursor_number is handled by \$h" if is_tracing;
+
+    \$h->start_document( {} );  ## superfluous in the current version, but just in case...
+
+    my \$end_element = \$h->can( "end_element" );
+    ## nodeset2struct_start() will queue up the matching end_element
+    \$h->start_element( \$ctx->{Node} )
+      if \$ctx->{EventType} eq "start_element";
+
+    nodeset2struct_start(
+      \$h,
+      \$h->can( "start_element" ),
+      \$h->can( "characters"    ),
+      \$end_element,
+    );
+
+    push \@{\$ctx->{EndSubs}}, [
+      sub {
+        unshift \@XFD::AsStructHandlers, shift;
+      },
+      \$h,
+    ];
+  }
+  else {
+    ## TODO: do this at compile time.
+    die "EventPath function struct() requires a start_element or start_document\n";
+  }
+} # nodeset2struct
+CODE_END
+}
+
+##########
+##########
+@XFD::nodeset2number::ISA = qw( XFD::NodesetConverter );
+
+sub XFD::nodeset2number::immed_code_template {
+    ## This is used in cases where the location path can be
+    ## evaluated immediately.
+    return <<CODE_END;
+do { ## nodeset2number
+  my \$ctx = (
+    <NEXT>
+  )[0];
+  ( exists \$ctx->{Node}->{Value} && _looks_numeric \$ctx->{Node}->{Value} )
+    ? 0 + \$ctx->{Node}->{Value}
+    : "NaN";
+} # nodeset2number
+CODE_END
+}
+
+
+sub XFD::nodeset2number::precursor_fetching_code {
+    my $self = shift;
+    my ( $precursor_number ) = @_;
+
+    return qq[do {
+  my \$string = \$postponement->[_p_first_precursor+$precursor_number];
+  ( defined \$string && _looks_numeric( \$string ) ) ? 0 + \$string
+                                                  : "NaN"
+}];
+}
+
+
+## Collect text *just* like a string.
+@XFD::NumberPostponer::ISA = qw( XFD::StringPostponer );
+
+##########
+   @XFD::nodeset2boolean::ISA = qw( XFD::NodesetConverter );
+
+sub XFD::nodeset2boolean::immed_code_template {
+    return <<CODE_END;
+(
+  scalar( ## nodeset2boolean
+    <NEXT>
+  ) ? 1 : 0
+) # nodeset2boolean
+CODE_END
+}
+
+sub XFD::nodeset2boolean::precursor_fetching_code {
+    my $self = shift;
+    my ( $precursor_number ) = @_;
+
+    return
+        "( \$postponement->[_p_first_precursor+$precursor_number] || 0 )";
+}
+
+
+sub XFD::nodeset2boolean::default_value_code { '""' };
+
+   @XFD::BooleanPostponer::ISA = qw( XFD::NodesetPostponer );
+sub XFD::BooleanPostponer::postponement_setting_code {
+    my $self = shift;
+    my $precursor_number = $self->[_np_precursor_number];
+    return <<CODE_END;
+\$postponement->[_p_first_precursor+$precursor_number] = 1; ## nodeset2boolean: if we got here, the nodeset is non-empty.
+CODE_END
+}
+
+##########
+   @XFD::nodeset2nodeset::ISA = qw( XFD::NodesetConverter );
+sub XFD::nodeset2nodeset::immed_code_template {
+    return "<NEXT>";
+}
+
+
+sub XFD::nodeset2nodeset::precursor_fetching_code {
+    my $self = shift;
+    my ( $precursor_number ) = @_;
+
+    return
+        "( \$postponement->[_p_first_precursor+$precursor_number] || \$ctx )";
+}
+
+###############################################################################
+##
+## User Visible Functions
+##
+## These (and only these) must all be in the XFD::Function::* namespaces,
+## so function() can find them.  They derive from a subclass that indicates
+## their return types so munge_parms() can figure out what it's parameters
+## return.
+##
+
+## The first "$_[0]" in this:
+##    shift->build_expr( 1, 1, $_[0], sub { $_[0] } );
+## is $context.
+
+##########
+
+   @XFD::Function::boolean::ISA = qw( XFD::BooleanFunction );
+sub XFD::Function::boolean::as_immed_code {
+    shift->build_expr( 1, 1, $_[0], sub { $_[0] } );
+}
+##########
+   @XFD::Function::ceiling::ISA = qw( XFD::NumericFunction );
+sub XFD::Function::ceiling::as_immed_code {
+    require POSIX;
+    shift->build_expr( 1, 1, $_[0], sub {"POSIX::ceil( $_[0] )" } );
+}
+##########
+   @XFD::Function::concat::ISA = qw( XFD::StringFunction );
+sub XFD::Function::concat::as_immed_code {
+    shift->build_expr( 2, undef, $_[0], sub {
+        "join( '', " . join( ", ", @_ ) . " )";
+    } );
+}
+##########
+   @XFD::Function::contains::ISA = qw( XFD::BooleanFunction );
+sub XFD::Function::contains::parm_type { "string" }
+sub XFD::Function::contains::as_immed_code {
+    shift->build_expr( 2, 2, $_[0], sub {
+        "0 <= index( " . join( ", ", @_ ) . " )";
+    } );
+}
+##########
+   @XFD::Function::false::ISA = qw( XFD::BooleanFunction );
+sub XFD::Function::false::as_immed_code {
+    shift->build_expr( 0, 0, $_[0], sub { "0" } );
+}
+##########
+   @XFD::Function::floor::ISA = qw( XFD::NumericFunction );
+sub XFD::Function::floor::as_immed_code {
+    require POSIX;
+    shift->build_expr( 1, 1, $_[0], sub {"POSIX::floor( $_[0] )"} );
+}
+##########
+   @XFD::Function::hash::ISA = qw( XFD::NodesetFunction );
+sub XFD::Function::hash::result_type { "hash" }
+sub XFD::Function::hash::parm_type   { "hash" }
+sub XFD::Function::hash::new {
+    my $self = shift->XFD::NodesetFunction::new( @_ );
+    push @$self, XFD::self_node->new unless @$self;
     return $self;
 }
 
-
-sub XFD::node2number_converter::as_incr_code {
-    my $self = shift;
-
-    ## We need to run some code as the action, some of
-    ## which calls the real action.  So, fool SUPER::as_incr_code
-    ## in to thinking we're at the end of the chain for a
-    ## moment and get it to build our action for us,
-    ## then pass that down the chain to get the real
-    ## action.
-    my $fake_action_code = do {
-        local $self->[_next] = undef;
-        package XFD::node2number_converter;
-        $self->SUPER::as_incr_code( @_ );
-    };
-
-    return $self->[_next]->as_incr_code( \$fake_action_code );
-}
-
-sub XFD::node2number_converter::incr_code_template {
-    ## This is actually passed down to the node2string_converter
-    ## as the action code with the real action code where <NEXT> is.
-    ## Thuse the string conversion runs first
-    ## and sets the ExpressionResult, then this bit runs and converts the
-    ## result.
-    return <<CODE_END;
-{ ## node2number
-    \$d->{ExpressionResult} = _looks_numeric \$d->{ExpressionResult}
-        ? 0 + \$d->{ExpressionResult}
-        : "NaN";  ## TODO: work better with Perl's "real" NaN support?
-    <NEXT>
-} # node2number
-CODE_END
-}
-
-
-sub XFD::node2number_converter::immed_code_template {
-    return <<CODE_END;
-do { ## node2number
-    my \$string = (
-        <NEXT>
-    );
-    _looks_numeric \$string
-        ? 0 + \$string
-        : "NaN";  ## TODO: work better with Perl's "real" NaN support?
-} # node2number
-CODE_END
-}
-
-
-##########
-@XFD::node2boolean_converter::ISA = qw( XFD::Converter );
-
-sub XFD::node2boolean_converter::as_incr_code {
-    my $self = shift;
-
-    ## We need to run some code as the action, some of
-    ## which calls the real action.  So, fool SUPER::as_incr_code
-    ## in to thinking we're at the end of the chain for a
-    ## moment and get it to build our action for us,
-    ## then pass that down the chain to get the real
-    ## action.
-    my $fake_action_code = do {
-        local $self->[_next] = undef;
-        package XFD::node2boolean_converter;
-        $self->SUPER::as_incr_code( @_ );
-    };
-
-    return $self->[_next]->as_incr_code( \$fake_action_code );
-}
-
-sub XFD::node2boolean_converter::incr_code_template {
-    my $self = shift;
-
-    ## This is actually passed down the chain as the action code,
-    ## so the *real* action code goes in <NEXT>, then the result
-    ## of this template is is passed off as the action.
-    return <<CODE_END;
-if ( \$ctx->{IsEndEvent} ) {
-    ## It's got to be true if we reached here...
-    \$d->{ExpressionResult} = 1;
-    <NEXT>
-}
-CODE_END
-}
-
-
-sub XFD::node2boolean_converter::immed_code_template {
-    return <<CODE_END;
-(
-    scalar( ## node2boolean
-        <NEXT>
-    ) ? 1 : 0
-) # node2boolean
-CODE_END
-}
-
-
-###############################################################################
-##
-## Misc
-##
-
-
-## When the root op is an expression or scalar, we need to save the
-## result and fire the action iff the result is true.
-##
-sub expr_eval($$) {
-    my $expr_code    = ${$_[0]};
-    my ( $expr_returns, $is_constant ) = split / /, ref $_[0];
-
-    my $next_code    = ${$_[1]};
-
-    my $expr_test = "\$d->{ExpressionResult}";
-    my @expr_test = ( bless \$expr_test, $expr_returns );
-
-    ## TODO: factor the type conversion logic out of _munge_parms().
-    _munge_parms( 1, 1, "expr_eval", \@expr_test, "boolean" );
-    $expr_test = ${$expr_test[0]};
-
-    if ( $expr_returns eq "boolean" ) {
-        $expr_code = "$expr_code ? true : false";
-        $expr_test = "$expr_test != false";
-    }
-
-    _indent $next_code if _indentomatic;
-
-    return \<<CODE_END;
-## expr_eval
-\$d->{ExpressionResult} = $expr_code;  ## $expr_returns
-if ( $expr_test ) {
-$next_code}
-CODE_END
-}
-
-##########
-## TODO: Consider making already_ran an ARRAY in $d.
-my $action_id = 0;
-sub action {
-    my $code = ${$_[0]};
-    $code = "## NO ACTION (undef)\n" unless defined $code;
-    _indent $code if _indentomatic;
-
-    my $i = $action_id++;
-
-    my @gates;
-    push @gates, "\$ctx->{IsStartEvent} "
-        unless $has_start_or_end;
-    push @gates, "! \$XFD::already_ran{$i}++ "
-        if $self_curriers > 1;
-
-    my $gates = join "\n    && ", @gates;
-    $gates .= "\n" if _indentomatic && @gates > 1;
-
-    return @gates ? \<<GATED : \<<ALWAYS_DO;
-## action
-if ( $gates) {
-$code} # action
-
-GATED
-{ # action
-$code} # action
-
-ALWAYS_DO
-}
-
-##########
-###############################################################################
-##
-## Functions
-##
-
-## Boolean functions return 0 or 1, it's up to expr_eval (or any
-## other code which passes these in or out to perl code) to convert
-## these to true() or false().  Passing these in/out of this subsystem
-## is far rarer than using them within it. Using 1 or 0 lets
-## the optimization code and the generated use numeric or boolean
-## Perl ops.
-
-## When compiled, expressions and function calls are turned in to
-## Perl code right in the grammar, with a vew exceptions like
-## string( node-set ).
-
-## The parser calls this
-sub function {
-    my ( $name, $args ) = @_;
-    
-    no strict 'refs';
-
-    ## prevent ppl from spelling then "foo_bar"
-    my $real_name = $name;
-    my $had_underscores = $real_name =~ s/_/*NO-UNDERSCORES-PLEASE*/g;
-    $real_name =~ s/-/_/g;
-
-    unless ( defined &{"XFD::Function::$real_name"} ) {
-        if ( $had_underscores ) {
-            if ( $had_underscores ) {
-                $real_name = $name;
-                $real_name =~ s/-/_/g;
-                if ( defined &{"XFD::Function::$real_name"} ) {
-                    die
-                "XPath function mispelled, use '-' instead of '_' in '$name'\n";
-                }
-            }
-        }
-        die "unknown XPath function '$name'\n";
-    }
-
-    return "XFD::Function::$real_name"->( $args );
-}
-
-
-## Helper subs
-##
-## NOTE: _munge_parms is where all the precursor magic is initiated.
-##
-sub _munge_parms {
-    ## police parms and convert to appropriate type as needed.
-    my ( $min, $max, $sub_name, $args, @types ) = @_;
-
-    croak "$min > $max!!" if defined $max && $min > $max;
-
-    my $msg;
-    my $cnt = scalar @$args;
-    if ( defined $max && $max == $min ) {
-        $msg = "takes $min parameters" unless $cnt == $min;
-    }
-    elsif ( $cnt < $min ) {
-        $msg = "takes at least $min parameters";
-    }
-    elsif ( defined $max && $cnt > $max ) {
-        $msg = "takes at most $max parameters";
-    }
-
-    my @errors;
-    push @errors, "$sub_name() $msg, got $cnt\n"
-        if defined $msg;
-    my $num = 1;
-    my @is_constant;
-    for ( @$args ) {
-        my $out_type = $types[0];
-
-        if ( $_->isa( "XFD::PathTest" ) ) {
-            if (
-                _is_rel_path $_
-                && ( $predicate_depth
-                    || $_->isa( "XFD::Axis::attribute" )
-                )
-            ) {
-                ## Predicates need their paths evaluated in-place instead
-                ## of incrementally.
-
-                my $converter_class = "XFD::node2${out_type}_converter";
-
-                die "Can't convert a node set to '${out_type}'"
-                    . " (no $converter_class found)\n"
-                    unless $converter_class->can( "new" );
-
-                my $converter= $converter_class->new;
-                $converter->set_next( $_ );
-
-                my $expr_code = $converter->as_immed_code;
-                _indent $expr_code if _indentomatic;
-                $_ = bless \$expr_code, $out_type;
-            }
-            else {
-                ## AHA! an expression we need to use as a precursor
-                ## shove it off to the side along with the type we need.
-                ## the type is important because the expression will
-                ## return a node set of 0 or 1 nodes, and the boolean
-                ## types treat undef as false; while number and string
-                ## treat them as "can't calculate this" signals.
-
-                ## Precursors need to be evaluated in the end_element
-                ## event most often.
-                $has_start_or_end = 1;
-
-                push @precursors, {
-                    NeedType => $out_type,
-                    Expr     => $_,
-                };
-                my $precursor_number = $#precursors;
-                my $code =
-                    "\$ctx->{Precursors}->[$rule_number]->[$precursor_number]";
-
-                $_ = bless \$code, $out_type;
-            }
-            push @is_constant, 0;
-            next;
-        }
-
-        my ( $type, $is_constant ) = split /( .+)/, ref;
-        push @is_constant, $is_constant;
-
-        if ( $type ne $out_type ) {
-            no strict "refs";
-            my $cvt = "_${type}2$out_type";
-            if ( defined &$cvt ) {
-                my $code = $cvt->( $$_ );
-
-                if ( $is_constant ) {
-                    $code = _eval_at_compile_time $out_type, $code;
-                    $out_type .= $is_constant;
-                }
-
-                $_ = bless \$code, $out_type;
-            }
-            else {
-                push @errors,
-                    "Can't convert ",
-                    $type,
-                    " to ",
-                    $types[0],
-                    " in ",
-                    $sub_name,
-                    "() parameter ",
-                    $num,
-                    "\n"
-            }
-        }
-        ++$num;
-        shift @types if @types > 1;
-    }
-
-    die @errors if @errors;
-    return wantarray ? @is_constant : ! grep ! $_, @is_constant;
-}
-
-
-
-sub _takes_no_parms{
-     unshift @_, 0, 0;
-     goto &_munge_parms;
-}
-
-## Sometimes a function call can be run at compile-time.  This normally
-## happens when all of it's inputs are constants.  _build_expr detects
-## that and does it.  This will probably only be of great benefit for
-## XPath exprs that are automatically compiled.
-##
-sub _build_expr {
-    my $code_sub = pop;
-    my $type     = pop;
-    my $all_args_are_constant = _munge_parms @_;
-    my $code = $code_sub->( map $$_, @{$_[3]} );
-    if ( $all_args_are_constant ) {
-        $code = _eval_at_compile_time $type, $code;
-        $type .= " constant";
-    }
-    return bless \$code, $type;
-}
-
-##########
-sub XFD::Function::boolean{
-    _build_expr 1, 1, "boolean", shift, "boolean",
-        "boolean", sub { $_[0] };
+sub XFD::Function::hash::as_immed_code {
+    shift->build_expr( 1, 1, $_[0], sub { $_[0] } );
 }
 ##########
-sub XFD::Function::ceiling {
-    require POSIX;
-    _build_expr 1, 1, "ceiling", shift, "number",
-        "number", sub {"POSIX::ceil( $_[0] )"};
+   @XFD::Function::normalize_space::ISA = qw( XFD::StringFunction );
+sub XFD::Function::normalize_space::new {
+    my $self = shift->XFD::StringFunction::new( @_ );
+    push @$self, XFD::self_node->new unless @$self;
+    return $self;
 }
-##########
-sub XFD::Function::concat {
-    _build_expr 2, undef, "concat", shift, "string",
-        "string", sub {
-            "join( '', " . join( ", ", @_ ) . " )";
-        };
-}
-##########
-sub XFD::Function::contains {
-    _build_expr 2, 2, "contains", shift, "string",
-        "boolean", sub {
-            "0 <= index( " . join( ", ", @_ ) . " )";
-        };
-}
-##########
-{
-    my $end_code = "!\$ctx->{IsStartEvent}";
 
-    sub XFD::Function::is_end_event {   ## An XFD-only (ie non-XPath) function
-        _takes_no_parms "end_event", @_;
-        $has_start_or_end = 1;
-        return bless \$end_code, "boolean";
-    }
-}
-##########
-{
-    my $false_code = "0";
-
-    sub XFD::Function::false {
-        _takes_no_parms "false", @_;
-        return bless \$false_code, "boolean constant";
-    }
-}
-##########
-sub XFD::Function::floor {
-    require POSIX;
-    _build_expr 1, 1, "floor", shift, "number",
-        "number", sub {"POSIX::floor( $_[0] )"};
-}
-##########
-sub XFD::Function::normalize_space {
+sub XFD::Function::normalize_space::as_immed_code {
     ## We don't do the argless version because we can't for all nodes, since
     ## that would require keeping entire subtrees around.  We might be
     ## able to do it for attributes and leaf elements, throwing an error
     ## at runtime if the node is not a leaf node.
-    my ( $args ) = @_;
-    _munge_parms 1, 1, "normalize-space", $args, "string";
-
-    my $code = "do { my \$s = ${$args->[0]}; \$s =~ s/^[ \\t\\r\\n]+//; \$s =~ s/[ \\t\\r\\n]+(?!\\n)\\Z//; \$s =~ s/[ \\t\\r\\n]+/ /g; \$s }";
-    return bless \$code, "string";
+    shift->build_expr( 1, 1, $_[0], sub {
+        "do { my \$s = $_[0]; \$s =~ s/^[ \\t\\r\\n]+//; \$s =~ s/[ \\t\\r\\n]+(?!\\n)\\Z//; \$s =~ s/[ \\t\\r\\n]+/ /g; \$s }";
+    } );
 
 }
 ##########
-sub XFD::Function::not {
-    _build_expr 1, 1, "not", shift, "boolean",
-        "boolean", sub { "! $_[0]" }
+   @XFD::Function::not::ISA = qw( XFD::BooleanFunction );
+sub XFD::Function::not::as_immed_code {
+    shift->build_expr( 1, 1, $_[0], sub { "! $_[0]" } );
 }
 ##########
-sub XFD::Function::number{
-    _build_expr 1, 1, "number", shift, "number",
-        "number", sub { $_[0] };
+   @XFD::Function::number::ISA = qw( XFD::NumericFunction );
+sub XFD::Function::number::new {
+    my $self = shift->XFD::NumericFunction::new( @_ );
+    push @$self, XFD::self_node->new unless @$self;
+    return $self;
+}
+sub XFD::Function::number::as_immed_code {
+    shift->build_expr( 1, 1, $_[0], sub { $_[0] } );
 }
 ##########
-sub XFD::Function::round {
+   @XFD::Function::local_name::ISA = qw( XFD::NodesetFunction );
+sub XFD::Function::local_name::new {
+    my $self = shift->XFD::NodesetFunction::new( @_ );
+    push @$self, XFD::self_node->new unless @$self;
+    return $self;
+}
+sub XFD::Function::local_name::as_immed_code {
+    shift->build_expr( 1, 1, $_[0], sub {
+        "( exists( $_[0]\->{Node}->{LocalName} ) && $_[0]\->{Node}->{LocalName} ) || \"\"";
+    } );
+}
+##########
+   @XFD::Function::name::ISA = qw( XFD::NodesetFunction );
+sub XFD::Function::name::new {
+    my $self = shift->XFD::NodesetFunction::new( @_ );
+    push @$self, XFD::self_node->new unless @$self;
+    return $self;
+}
+sub XFD::Function::name::as_immed_code {
+    shift->build_expr( 1, 1, $_[0], sub {
+        "( exists( $_[0]\->{Node}->{Name} ) && $_[0]\->{Node}->{Name} ) || \"\"";
+    } );
+}
+##########
+   @XFD::Function::namespace_uri::ISA = qw( XFD::NodesetFunction );
+sub XFD::Function::namespace_uri::new {
+    my $self = shift->XFD::NodesetFunction::new( @_ );
+    push @$self, XFD::self_node->new unless @$self;
+    return $self;
+}
+sub XFD::Function::namespace_uri::as_immed_code {
+    shift->build_expr( 1, 1, $_[0], sub {
+        "( exists( $_[0]\->{Node}->{NamespaceURI} ) && $_[0]\->{Node}->{NamespaceURI} ) || \"\"";
+    } );
+}
+##########
+   @XFD::Function::round::ISA = qw( XFD::NumericFunction );
+sub XFD::Function::round::as_immed_code {
     require POSIX;
     ## Expressly ignoring the -0 conditions in the spec.
-    _build_expr 1, 1, "round", shift, "number",
-        "number", sub {"POSIX::floor( $_[0] + 0.5 )"};
+    shift->build_expr( 1, 1, $_[0], sub {"POSIX::floor( $_[0] + 0.5 )"} );
 }
 ##########
-{
-    my $start_code = "\$ctx->{IsStartEvent}";
-
-    sub XFD::Function::is_start_event {   ## An XFD-only (ie non-XPath) function
-        _takes_no_parms "start_event", @_;
-        $has_start_or_end = 1;
-        return bless \$start_code, "boolean";
-    }
+   @XFD::Function::starts_with::ISA = qw( XFD::BooleanFunction );
+sub XFD::Function::starts_with::parm_type { "string" }
+sub XFD::Function::starts_with::as_immed_code {
+    shift->build_expr( 2, 2, $_[0], sub {
+        "0 == index( " . join( ", ", @_ ) . " )";
+    } );
 }
 ##########
-sub XFD::Function::starts_with {
-    _build_expr 2, 2, "starts-with", shift, "string",
-        "boolean", sub {
-            "0 == index( " . join( ", ", @_ ) . " )";
-        };
-}
-##########
-sub XFD::Function::string{
-    _build_expr 1, 1, "string", shift, "string",
-        "string", sub { $_[0] };
+   @XFD::Function::string::ISA = qw( XFD::StringFunction );
+sub XFD::Function::string::new {
+    my $self = shift->XFD::StringFunction::new( @_ );
+    push @$self, XFD::self_node->new unless @$self;
+    return $self;
 }
 
+sub XFD::Function::string::as_immed_code {
+    shift->build_expr( 1, 1, $_[0], sub { $_[0] } );
+}
 ##########
-sub XFD::Function::string_length {
+   @XFD::Function::string_length::ISA = qw( XFD::NumericFunction );
+sub XFD::Function::string_length::new {
+    my $self = shift->XFD::NumericFunction::new( @_ );
+    push @$self, XFD::self_node->new unless @$self;
+    return $self;
+}
+
+sub XFD::Function::string_length::parm_type { "string" }
+sub XFD::Function::string_length::as_immed_code {
     ## We don't do string-length() because we can't for all nodes, since
     ## that would require keeping entire subtrees around.  We might be
     ## able to do it for attributes and leaf elements, throwing an error
     ## at runtime if the node is not a leaf node.
-    _build_expr 1, 1, "string-length", shift, "string",
-        "string", sub { "length( $_[0] )" };
+    shift->build_expr( 1, 1, $_[0], sub { "length( $_[0] )" } );
 }
 ##########
-sub XFD::Function::substring {
-    my ( $args ) = @_;
-    my $all_constant = _munge_parms 2, 3, "substring", $args, "string", "int";
-    my @args = map $$_, @$args;
+   @XFD::Function::struct::ISA = qw( XFD::NodesetFunction );
+sub XFD::Function::struct::result_type { "struct" }
+sub XFD::Function::struct::parm_type   { "struct" }
+sub XFD::Function::struct::new {
+    my $self = shift->XFD::NodesetFunction::new( @_ );
+    push @$self, XFD::self_node->new unless @$self;
+    return $self;
+}
 
-    my @is_constant = map 0 <= index( ref, "constant" ), @$args;
+sub XFD::Function::struct::as_immed_code {
+    shift->build_expr( 1, 1, $_[0], sub { $_[0] } );
+}
+##########
+   @XFD::Function::substring::ISA = qw( XFD::StringFunction );
+sub XFD::Function::substring::parm_type {
+    my $self = shift;
+    return shift == 0 ? "string" : "int";
+}
+
+sub XFD::Function::substring::as_immed_code {
+    my $self = shift;
+    my ( $context ) = @_;
+
+    my @args = $self->munge_parms( 2, 3, $context );
+
+    my @is_constant = map $_->is_constant, @$self;
 
     my $code;
-    if ( @$args == 2 ) {
+    if ( @args == 2 ) {
         my $pos_code =
             "do { my \$pos = $args[1] - 1; \$pos = 0 if \$pos < 0; \$pos}";
 
-        $pos_code = _eval_at_compile_time "number", $pos_code
+        $pos_code = _eval_at_compile_time "number", $pos_code, $context
             if $is_constant[1];
         $code = "substr( $args[0], $pos_code )";
     }
     else {
         ## must be 3 arg form.
         my $pos_len_code =
-            "do { my ( \$pos, \$len ) = ( $args[1] - 1, ${$args->[2]} ); my \$end = \$pos + \$len; \$pos = 0 if \$pos < 0; \$len = \$end - \$pos ; \$len = 0 if \$len < 0; ( \$pos, \$len ) }";
+            "do { my ( \$pos, \$len ) = ( $args[1] - 1, $args[2] ); my \$end = \$pos + \$len; \$pos = 0 if \$pos < 0; \$len = \$end - \$pos ; \$len = 0 if \$len < 0; ( \$pos, \$len ) }";
 
         ## Not bothering to optimize the substring( <whatever>, <const>, <var> )
         ## situation, only substring( <whatever>, <const>, <const> )
@@ -1075,128 +2014,156 @@ sub XFD::Function::substring {
         }
     }
 
-    $code = _eval_at_compile_time "string", $code
-        if $all_constant;
+    $code = _eval_at_compile_time "string", $code, $context
+        if $self->is_constant;
 
-    return bless \$code, "string";
-
+    return $code;
 }
 ##########
-sub XFD::Function::substring_after {
-    _build_expr 2, 2, "substring-after", shift, "string",
-        "string", sub {
-            "do { my ( \$s, \$ss ) = ( $_[0], $_[1] ); my \$pos = index \$s, \$ss; \$pos >= 0 ? substr \$s, \$pos + length \$ss : ''  }";
-        };
+   @XFD::Function::substring_after::ISA = qw( XFD::StringFunction );
+sub XFD::Function::substring_after::as_immed_code {
+    shift->build_expr( 2, 2, $_[0], sub {
+        "do { my ( \$s, \$ss ) = ( $_[0], $_[1] ); my \$pos = index \$s, \$ss; \$pos >= 0 ? substr \$s, \$pos + length \$ss : ''  }";
+    } );
 }
 ##########
-sub XFD::Function::substring_before {
-    _build_expr 2, 2, "substring-before", shift, "string",
-        "string", sub {
-            "do { my \$s = $_[0]; my \$pos = index \$s, $_[1]; \$pos >= 0 ? substr \$s, 0, \$pos : ''  }";
-        };
+   @XFD::Function::substring_before::ISA = qw( XFD::StringFunction );
+sub XFD::Function::substring_before::as_immed_code {
+    shift->build_expr( 2, 2, $_[0], sub {
+        "do { my \$s = $_[0]; my \$pos = index \$s, $_[1]; \$pos >= 0 ? substr \$s, 0, \$pos : ''  }";
+    } );
 }
 ##########
-sub XFD::Function::translate {
-    ## We don't implement the argless version because we can't for all nodes, since
-    ## that would require keeping entire subtrees around.  We might be
+   @XFD::Function::translate::ISA = qw( XFD::StringFunction );
+sub XFD::Function::translate::as_immed_code {
+    ## We don't implement the argless version because we can't for all nodes,
+    ## since that would require keeping entire subtrees around.  We might be
     ## able to do it for attributes and leaf elements, throwing an error
     ## at runtime if the node is not a leaf node.
 
     ## TODO: verify that quotemeta is really enough and is correct, here.
 
-    ## We don't handle the case where only one of $from and $to is constant, should
-    ## be rare (hell, just seeing translate() anywhere should be rare).  This was
-    ## not true for substring() above, which I suspect will be called a bit more
-    ## than translate().
-    _build_expr 3, 3, "translate", shift, "string",
-        "string", sub {
-            "do { my ( \$s, \$f, \$t ) = ( $_[0], quotemeta $_[1], quotemeta $_[2] ); eval qq{\\\$s =~ tr/\$f/\$t/d}; \$s }";
-        };
+    ## We don't handle the case where only one of $from and $to is constant,
+    ## should be rare (hell, just seeing translate() anywhere should be rare).
+    ## This was not true for substring() above, which I suspect will be
+    ## called a bit more than translate().
+    shift->build_expr( 3, 3, $_[0], sub {
+        "do { my ( \$s, \$f, \$t ) = ( $_[0], quotemeta $_[1], quotemeta $_[2] ); eval qq{\\\$s =~ tr/\$f/\$t/d}; \$s }";
+    } );
 }
 ##########
-{
-    my $true_code = "1";
-
-    sub XFD::Function::true {
-        _takes_no_parms "true", @_;
-        return bless \$true_code, "boolean constant";
-    }
+   @XFD::Function::true::ISA = qw( XFD::BooleanFunction );
+sub XFD::Function::true::as_immed_code {
+    shift->build_expr( 0, 0, $_[0], sub { "1" } );
 }
 
 ###############################################################################
 ##
 ## Variable references
 ##
-sub get_var {
-    my ( $var_name ) = shift;
-    my $code = "\$d->_look_up_var( '$var_name' )";
-    bless \$code, "any";
+   @XFD::VariableReference::ISA = qw( XFD::Op );
+sub XFD::VariableReference::is_constant { 0 }
+sub XFD::VariableReference::result_type { "any" }
+sub XFD::VariableReference::as_immed_code {
+    my $self = shift;
+    my $var_name = $self->[0];
+    return "\$cur_self->_look_up_var( '$var_name' )";
 }
 
 ###############################################################################
 ##
 ## Operators (other than Union)
 ##
-sub _relational_op_type {
-    my $foo = ref( $_[0]->[0] ) . "|" . ref( $_[0]->[1] );
+sub _compile_relational_ops {
+    my ( $name, $numeric_op, $string_op ) = @_;
+    for ( qw( boolean number string ) ) {
+        my $class = "XFD::Operator::${_}_${name}";
+        my $op = $_ ne "string" ? $numeric_op : $string_op;
+        
+        no strict "refs";
+        @{"${class}::ISA"} = qw( XFD::BooleanFunction );
+        eval <<CODE_END;
+            sub ${class}::parm_type { "$_" }
+            sub ${class}::as_immed_code {
+                \$DB::single = 1;
+                shift->build_expr( 2, 2, \$_[0], sub { "( \$_[0] $op \$_[1] )" } );
+            }
+CODE_END
+    }
+}
+
+
+sub relational_op {
+    my ( $op_name, $parm1, $parm2 ) = @_;
+    my $foo = $parm1->result_type . "|" . $parm2->result_type;
     for (qw( boolean number string )) {
-        return $_ if 0 <= index $foo, $_;
+        if ( 0 <= index $foo, $_ ) {
+            my $class = "XFD::Operator::${_}_${op_name}";
+            return $class->new( $parm1, $parm2 );
+        }
     }
     die "Couldn't discern a parameter type in $foo";
 }
 
-sub _relational_op {
-    my ( $name, $numeric_op, $non_numeric_op ) = (shift, shift, shift);
-    my $op_type = _relational_op_type @_;
-    my $op = $op_type ne "string" ? $numeric_op : $non_numeric_op;
-    _build_expr 2, 2, $name, @_, $op_type,
-        "boolean", sub { "( $_[0] $op $_[1] )" }
+
+sub _compile_math_op {
+    my ( $name, $op ) = @_;
+
+    my $class = "XFD::Operator::${name}";
+    
+    no strict "refs";
+    @{"${class}::ISA"} = qw( XFD::NumericFunction );
+    eval <<CODE_END;
+        sub ${class}::as_immed_code {
+            shift->build_expr( 2, 2, \$_[0], sub { "( \$_[0] $op \$_[1] )" } );
+        }
+CODE_END
 }
 
-sub _math_op {
-    my ( $name, $op ) = (shift, shift);
-    _build_expr 2, 2, $name, @_, "number",
-        "number", sub { "( $_[0] $op $_[1] )" }
+
+sub math_op {
+    my ( $name, $parm1, $parm2 ) = @_;
+    my $class = "XFD::Operator::$name";
+    return $class->new( $parm1, $parm2 );
 }
 
 ##########
-sub parens {
-    my ( $op_type ) = split / /, ref $_[0];
-    _build_expr 1, 1, "(...)", [shift], $op_type,
-        $op_type, sub { "( $_[0] )" }
+   @XFD::Parens::ISA = qw( XFD::Function );
+sub XFD::Parens::result_type   {      shift->[0]->result_type               }
+sub XFD::Parens::as_immed_code { join shift->[0]->as_immed_code( @_ ), "( ", " )" }
+##########
+   @XFD::Negation::ISA = qw( XFD::NumericFunction );
+sub XFD::Negation::as_immed_code {
+    shift->build_expr( 1, 1, $_[0],
+        sub { "do { my \$n = $_[0]; \$n eq 'NaN' ? \$n : 0-\$n }" }
+    );
 }
 ##########
-sub negation {
-    my ( $op_type ) = split / /, ref $_[0];
-    _build_expr 1, 1, "(...)", [shift], "number",
-        "number", sub { "do { my \$n = $_[0]; \$n eq 'NaN' ? \$n : 0-\$n }" }
+   @XFD::Operator::and::ISA = qw( XFD::BooleanFunction );
+sub XFD::Operator::and::as_immed_code {
+    shift->build_expr( 2, 2, $_[0], sub { "( $_[0] and $_[1] )" } );
 }
 ##########
-sub and {
-    _build_expr 2, 2, "and", shift, "boolean",
-        "boolean", sub { "( $_[0] and $_[1] )" }
-}
-##########
-sub or {
-    _build_expr 2, 2, "or", shift, "boolean",
-        "boolean", sub { "( $_[0] or $_[1] )" }
+   @XFD::Operator::or::ISA = qw( XFD::BooleanFunction );
+sub XFD::Operator::or::as_immed_code {
+    shift->build_expr( 2, 2, $_[0], sub { "( $_[0] or $_[1] )" } );
 }
 ##########
 ##
 ## Relational ops
 ##
-sub equals        { _relational_op  "=", "==", "eq", shift }
-sub not_equals    { _relational_op "!=", "!=", "ne", shift }
-sub lt            { _relational_op "<",  "<",  "lt", shift }
-sub lte           { _relational_op "<=", "<=", "le", shift }
-sub gt            { _relational_op ">",  ">",  "gt", shift }
-sub gte           { _relational_op ">=", ">=", "ge", shift }
+_compile_relational_ops equals     => "==", "eq";
+_compile_relational_ops not_equals => "!=", "ne";
+_compile_relational_ops lt         => "<" , "lt";
+_compile_relational_ops lte        => "<=", "le";
+_compile_relational_ops gt         => ">" , "gt";
+_compile_relational_ops gte        => ">=", "ge";
 ##########
-sub addition       { _math_op "mod", "+", shift }
-sub subtraction    { _math_op "-",   "-", shift }
-sub multiplication { _math_op "+",   "*", shift }
-sub division       { _math_op "div", "/", shift }
-sub modulus        { _math_op "mod", "%", shift }
+_compile_math_op addition       => "+";
+_compile_math_op subtraction    => "-";
+_compile_math_op multiplication => "*";
+_compile_math_op division       => "/";
+_compile_math_op modulus        => "%";
 
 ###############################################################################
 ##
@@ -1212,13 +2179,13 @@ sub modulus        { _math_op "mod", "%", shift }
 ##
 @XFD::doc_node::ISA = qw( XFD::PathTest );
 
+sub XFD::doc_node::possible_event_types { qw( start_document end_document ) }
 sub XFD::doc_node::incr_code_template {
     my $self = shift;
     return <<CODE_END;
-{ # doc_node
-my \$main_ctx = \$ctx; ## Hack to get precursorized exprs to use the correct ctx.
-    <NEXT>
-} # end doc_node
+## doc_node
+  <NEXT>
+# end doc_node
 CODE_END
 }
 
@@ -1245,37 +2212,149 @@ sub XFD::self_node::incr_code_template { "<NEXT>" }
 ##########
 @XFD::node_name::ISA = qw( XFD::PathTest );
 
-sub XFD::node_name::curry_tests { qw( EltTests AttrTests ) }
+sub XFD::node_name::new {
+    my $self = shift->XFD::PathTest::new( @_ );
+
+    if ( defined $dispatcher->{Namespaces} ) {
+        my $name = $self->[0];
+        my ( $prefix, $local_name ) =
+            $name =~ /(.*):(.*)/
+                ? ( $1, $2 )
+                : ( "", $name );
+
+        my $uri = $dispatcher->{Namespaces}->{$prefix};
+        die "prefix '$prefix:' not declared in Namespaces option\n"
+            unless defined $uri;
+        $self->[0] = "{$uri}$local_name";
+    }
+
+    return $self;
+}
+
+sub XFD::node_name::curry_tests { qw( start_element attribute ) }
+
+sub XFD::node_name::possible_event_types { qw( start_element attribute ) }
+sub XFD::node_name::useful_event_contexts { qw( start_element end_element attribute ) }
+
+sub XFD::_jclarkify_and_cmp {
+    my ( $ctx, $jclarked_name2 ) = @_;
+    my $data = $ctx->{Node};
+    my $jclarked_name1;
+
+    if (
+        exists $data->{NamespaceURI} && defined $data->{NamespaceURI} &&
+        exists $data->{LocalName}    && defined $data->{LocalName}
+    ) {
+        $jclarked_name1 = "{$data->{NamespaceURI}}$data->{LocalName}";
+    }
+    elsif ( exists $data->{Name} && defined $data->{Name} ) {
+        $jclarked_name1 = $data->{Name};
+    }
+    else {
+        ## Hmmm, warn here?
+        return -2;
+    }
+
+    return $jclarked_name1 cmp $jclarked_name2;
+}
+
+sub XFD::node_name::condition {
+    my $self = shift;
+    my ( $ctx_expr ) = @_;
+
+    return defined $dispatcher->{Namespaces}
+       ? "_jclarkify_and_cmp( $ctx_expr, '$self->[0]' ) == 0"
+       : "exists $ctx_expr\->{Node}->{Name} && $ctx_expr\->{Node}->{Name} eq '$self->[0]'";
+}
 
 sub XFD::node_name::incr_code_template {
     my $self = shift;
+    my $cond = $self->condition( "\$ctx" );
+
     return <<CODE_END;
-## node name '$self->[0]'
-if ( exists \$ctx->{Node}->{Name} && \$ctx->{Node}->{Name} eq '$self->[0]' ) {
-    <NEXT>
-} # node name '$self->[0]'
+if ( $cond ) {
+  emit_trace_SAX_message "EventPath: node name '", '$self->[0]', "' found" if is_tracing;
+  <NEXT>}
 CODE_END
 }
 
 sub XFD::node_name::immed_code_template {
     my $self = shift;
+    my $cond = $self->condition( "\$_" );
+
     return <<CODE_END;
-grep(  ## node name '$self->[0]'
-    exists \$_->{Node}->{Name} && \$_->{Node}->{Name} eq '$self->[0]',
-    <NEXT>
-) # node name '$self->[0]'
+grep ## node name '$self->[0]'
+  $cond,
 CODE_END
 }
 
 ##########
+@XFD::namespace_test::ISA = qw( XFD::PathTest );
+
+sub XFD::namespace_test::new {
+    my $self = shift->XFD::PathTest::new( @_ );
+
+    die "Namespaces option required to support '$self->[0]' match\n"
+        unless defined $dispatcher->{Namespaces};
+
+    $self->[0] =~ /(.*):\*\z/ or Carp::confess "Can't parse '$self->[0]'";
+
+    my $prefix = $1;
+    my $uri = $dispatcher->{Namespaces}->{$prefix};
+    die "prefix '$prefix:' not declared in Namespaces option\n"
+        unless defined $uri;
+
+    $self->[0] = $uri;
+
+    return $self;
+}
+
+sub XFD::namespace_test::curry_tests { qw( start_element attribute ) }
+
+sub XFD::namespace_test::possible_event_types { qw( start_element attribute ) }
+sub XFD::namespace_test::useful_event_contexts { qw( start_element end_element attribute ) }
+
+sub XFD::namespace_test::condition {
+    my $self = shift;
+    my ( $ctx_expr ) = @_;
+
+    return 
+       "exists $ctx_expr\->{Node}->{NamespaceURI} && $ctx_expr\->{Node}->{NamespaceURI} eq '$self->[0]'";
+}
+
+sub XFD::namespace_test::incr_code_template {
+    my $self = shift;
+    my $cond = $self->condition( "\$ctx" );
+
+    return <<CODE_END;
+if ( $cond ) {
+  emit_trace_SAX_message "EventPath: node namespace '", '$self->[0]', "' found" if is_tracing;
+  <NEXT>}
+CODE_END
+}
+
+sub XFD::namespace_test::immed_code_template {
+    my $self = shift;
+    my $cond = $self->condition( "\$_" );
+
+    return <<CODE_END;
+grep ## node name '$self->[0]'
+  $cond,
+CODE_END
+}
+
+##########
+## TODO: implement this as primary nodetype for this axis and not
+## a name test.
 @XFD::any_node_name::ISA = qw( XFD::PathTest );
 
-sub XFD::any_node_name::curry_tests { qw( EltTests AttrTests ) }
+sub XFD::any_node_name::curry_tests { qw( start_element attribute ) }
 
 sub XFD::any_node_name::incr_code_template { <<CODE_END }
 ## any node name
-if ( \$ctx->{NodeType} eq "element" || \$ctx->{NodeType} eq "attribute" ) {
-    <NEXT>
+if ( \$ctx->{EventType} eq "start_element" || \$ctx->{EventType} eq "attribute" ) {
+  emit_trace_SAX_message "EventPath: node name '*' found" if is_tracing;
+  <NEXT>
 } # any node name
 CODE_END
 
@@ -1290,18 +2369,57 @@ sub XFD::union::new {
 
 sub XFD::union::add { push @{shift()}, @_ }
 
-## TODO: Don't rel2abs here, meaning predicatize it.
+sub XFD::union::set_next { $_->set_next( @_ ) for @{shift()} }
+
 sub XFD::union::as_incr_code {
     my $self = shift;
+
+    return $self->[0]->as_incr_code( @_ ) if @$self == 1;
 
     return join "",
         map( {
             $_->isa( "XFD::PathTest" )
-               ? ( "# union\n", _rel2abs( $_ )->as_incr_code( @_ ) )
+               ? ( "# union\n", $_->as_incr_code( @_ ) )
                : die
 "XPath's union operator ('|') doesn't work on a ", ref $_, ", perhaps 'or' is needed.\n";
         } @$self
     ), "# end union\n" ;
+}
+
+##########
+##
+## An XFD::Rule is a special "noop" op that allows exceptions to be
+## labelled with a rule's pattern.
+##
+@XFD::Rule::ISA = qw( XFD::PathTest );
+
+sub XFD::Rule::fixup {
+    my $self = shift;
+
+    eval {
+        $self->XFD::PathTest::fixup( @_ );
+        1;
+    } or do {
+        $@ =~ s/\n/ in expression $self->[0]\n/;
+        die $@;
+    }
+}
+
+
+sub XFD::Rule::as_incr_code {
+    my $self = shift;
+    my ( $context ) = @_;
+
+    $context = { %$context };
+
+    my $r = eval {
+        $self->[_next]->as_incr_code( $context );
+    };
+    unless ( defined $r ) {
+        $@ =~ s/\n/ in expression $self->[0]\n/;
+        die $@;
+    }
+    return $r;
 }
 
 ##########
@@ -1310,6 +2428,10 @@ sub XFD::union::as_incr_code {
 ## new() might get a location path passed as a param, or find them in the
 ## predicates.  The former happens when st. like [@foo] occurs, the latter
 ## when [@foo=2] occurs (since the "=" converted @foo to a predicate).
+
+sub XFD::predicate::new {
+    return shift->XFD::PathTest::new( XFD::Function::boolean->new( @_ ) );
+}
 
 sub _expr() { 0 }
 
@@ -1324,37 +2446,16 @@ sub XFD::predicate::curry_tests {
     @all_curry_tests;
 }
 
-sub XFD::predicate::incr_code_template {
+
+sub XFD::predicate::as_incr_code {
     my $self = shift;
-    my $expr = $self->[_expr];
 
-    local $predicate_depth = $predicate_depth + 1;
+    ## TODO: Figure a way for get_expr_code to optimize away this if ( ... ).
+    ## Perhaps by adding a conditional op code.
 
-    unless ( defined $expr ) {
-        ## Must have been precursor-ized, so the action will
-        ## be run according to the predicates...
-        return "<NEXT>";
-    }
-
-    my $pred_expr = _build_expr 1, 1, "boolean", [ $expr ], "boolean",
-        "boolean", sub { shift };
-
-    if ( $fold_constants && 0 <= index ref $pred_expr, "constant" ) {
-        if ( $$pred_expr eq "0" ) {
-            ## TODO: optimize away the entire rule if there are no
-            ## functions with side effects (which includes all
-            ## internal functions).
-            return "## Failing predicate\n"
-        }
-        return "## Passing predicate $pred_expr\n<NEXT>"
-    }
-
-    return <<CODE_END;
-# predicate
-if (
-$$pred_expr
-) {
-    <NEXT>} # predicate
+    return get_expr_code $self->[_expr], <<CODE_END, undef, $self->[_next], @_;
+if( <EXPR> ) {
+  <NEXT>}
 CODE_END
 }
 
@@ -1367,45 +2468,68 @@ CODE_END
 ## The grammar calls axis(), which returns an object.
 ##
 sub axis {
-    my $axis_name = shift;
-    $axis_name =~ s/_/<UNDERSCORE_NOT_ALLOWED>/g;
-    $axis_name =~ s/-/_/g;
-    return "XFD::Axis::$axis_name"->new( @_ );
+    my $class = "XFD::Axis::$_[0]";
+    $class =~ s/_/<UNDERSCORE_NOT_ALLOWED>/g;
+    $class =~ s/-/_/g;
+    die "'$_[0]' is not a valid EventPath axis\n"
+        unless $class->can( "new" );
+    return $class->new( @_ );
 }
 
-@XFD::Axis::ISA = qw( XFD::PathTest );
+   @XFD::Axis::ISA = qw( XFD::PathTest );
+sub XFD::Axis::op_type { shift->XFD::Op::op_type . "::" }
+sub XFD::Axis::principal_event_type { "start_element" }
+sub XFD::Axis::possible_event_types { () } ## means "any"
 
 ##########
-@XFD::Axis::attribute::ISA = qw( XFD::Axis );
-
-sub XFD::Axis::attribute::curry_tests { ( "EltTests" ) }
+   @XFD::Axis::attribute::ISA = qw( XFD::Axis );
+sub XFD::Axis::attribute::curry_tests { ( "start_element" ) }
+sub XFD::Axis::attribute::principal_event_type { "attribute" }
+sub XFD::Axis::attribute::possible_event_types { qw( attribute ) }
+sub XFD::Axis::attribute::useful_event_contexts { qw( start_element end_element ) }
 
 sub XFD::Axis::attribute::incr_code_template {
     my $self = shift;
 
     ## node type tests only apply to certain event types, so
-    ## we only curry to those events.  This makes NodeType
+    ## we only curry to those events.  This makes EventType
     ## tests run-time noops, and simplifies others (node_name)
-    ## because they do not need to test $ctx->{NodeType}.
-    my @curry_tests =
-        grep $_ eq "AttrTests", $self->[_next]->curry_tests;
+    ## because they do not need to test $ctx->{EventType}.
+    my @curry_tests = grep $_ eq "attribute", $self->[_next]->curry_tests;
 
-    ## TODO: Warn about impossible to satisfy test unless @curry_tests.
+    die $self->op_type, " followed by ", $self->[_next]->op_type,
+        " can never match\n" unless @curry_tests;
+
+    return <<CODE_END if @curry_tests == 1;
+emit_trace_SAX_message "EventPath: queueing for attribute::" if is_tracing;
+push \@{\$ctx->{ChildCtx}->{$curry_tests[0]}}, [ ## attibute::
+  sub {
+    my ( \$postponement ) = \@_;
+    emit_trace_SAX_message "EventPath: in attribute" if is_tracing;
+    <NEXT>
+  },
+  \$postponement,
+]; # attribute::
+CODE_END
 
     my $curry_code = join "\n",
-        map "    push \@{\$child_ctx->{$_}}, \$next;",
+        map "  push \@{\$ctx->{ChildCtx}->{$_}}, \$queue_record;",
             @curry_tests;
 
     return <<CODE_END;
 ## attribute::
 {
-    ## Curry the remainder of the tests
-    ## to be handled in the appropriate
-    ## attribute events.
-    my \$next = sub {
-        my ( \$d, \$ctx, \$child_ctx ) = \@_;
-        <NEXT>
-    };
+  ## Curry the rest of the location path tests
+  ## to be handled in the appropriate attribute events.
+  my \$queue_record = [
+    sub {
+      my ( \$postponement ) = \@_;
+      emit_trace_SAX_message "EventPath: in attribute" if is_tracing;
+      <NEXT>
+    },
+    \$postponement,
+  ];
+  emit_trace_SAX_message "EventPath: queueing for attribute::" if is_tracing;
 $curry_code
 } # attribute::
 CODE_END
@@ -1415,50 +2539,79 @@ CODE_END
 sub XFD::Axis::attribute::immed_code_template {
     return <<CODE_END;
 ( ## attribute::
-    exists \$ctx->{Node}->{Attributes} && \$ctx->{Node}->{Attributes}
-    ? map {
-        my \$ctx = \$_;
-        map {
-            {
-                NodeType => 'attribute',
-                Node     => \$_,
-                Parent   => \$ctx,
-            };
-        } values %{\$ctx->{Node}->{Attributes}}
-    } <NEXT>
-    : ()
+  exists \$ctx->{Node}->{Attributes} && \$ctx->{Node}->{Attributes}
+  ?
+    <NEXT>
+    map {
+      {
+        EventType => 'attribute',
+        Node     => \$_,
+        Parent   => \$ctx,
+      };
+    } sort {
+        ## Put attributes in a reproducable order, mostly for testing
+        ## purposes.
+        ## TODO: Look for Node->{AttributeOrder} here
+        ( \$a->{NamespaceURI} || "" ) cmp ( \$b->{NamespaceURI} || "" )
+                                      ||
+        ( \$a->{LocalName}    || "" ) cmp ( \$b->{LocalName}    || "" )
+                                      ||
+        ( \$a->{Name}         || "" ) cmp ( \$b->{Name}         || "" )
+    }
+    values %{\$ctx->{Node}->{Attributes}}
+  : ()
 ) # attribute::
 CODE_END
 }
 
 
 ##########
-@XFD::Axis::child::ISA = qw( XFD::Axis );
+   @XFD::Axis::child::ISA = qw( XFD::Axis );
+sub XFD::Axis::child::possible_event_types {
+    ## TODO: optimize this list based on which tests we actuall
+    ## curry for.
+    qw( start_element comment processing_instruction characters )
+}
+sub XFD::Axis::child::useful_event_contexts { qw( start_document start_element ) }
 
 sub XFD::Axis::child::incr_code_template {
     my $self = shift;
 
     ## node type tests only apply to certain event types, so
-    ## we only curry to those events.  This makes NodeType
+    ## we only curry to those events.  This makes EventType
     ## tests run-time noops, and simplifies others (node_name)
-    ## because they do not need to test $ctx->{NodeType}.
+    ## because they do not need to test $ctx->{EventType}.
     my @curry_tests =
         grep exists $child_curry_tests{$_}, $self->[_next]->curry_tests;
 
+    die $self->op_type, " followed by ", $self->[_next]->op_type,
+        " can never match\n" unless @curry_tests;
+
+    return <<CODE_END if @curry_tests == 1;
+emit_trace_SAX_message "EventPath: queueing for child::" if is_tracing;
+push \@{\$ctx->{ChildCtx}->{$curry_tests[0]}}, [  ## child::
+  sub {
+    my ( \$postponement ) = \@_;
+    <NEXT>
+  },
+  \$postponement,
+]; # end child::
+CODE_END
+
     my $curry_code = join "\n",
-        map "    push \@{\$child_ctx->{$_}}, \$next;",
+        map "  push \@{\$ctx->{ChildCtx}->{$_}}, \$queue_record;",
             @curry_tests;
 
     return <<CODE_END;
-## child::
-{
-    ## Curry the remainder of the tests
-    ## to be handled in the appropriate
-    ## child events.
-    my \$next = sub {
-        my ( \$d, \$ctx, \$child_ctx ) = \@_;
-        <NEXT>
-    };
+{ ## child::
+  my \$queue_record = [
+    sub {
+      my ( \$postponement ) = \@_;
+      <NEXT>
+    },
+    \$postponement,
+  ];
+  emit_trace_SAX_message "EventPath: queueing for child::" if is_tracing;
 $curry_code
 } # child::
 CODE_END
@@ -1466,174 +2619,397 @@ CODE_END
 
 
 ##########
-@XFD::Axis::descendant_or_self::ISA = qw( XFD::Axis );
+   @XFD::Axis::descendant_or_self::ISA = qw( XFD::Axis );
 
-sub XFD::Axis::descendant_or_self::new {
-    ++$self_curriers;
-    package XFD::Axis::descendant_or_self;
-        shift->SUPER::new( @_ );
+sub XFD::Axis::descendant_or_self::possible_event_types {
+    ## TODO: optimize this list based on which tests we actuall
+    ## curry for.
+    qw( start_element comment processing_instruction characters )
+}
+
+## useful in any event context, even though self:: alone would be
+## more appropriate in most.
+
+sub XFD::Axis::descendant_or_self::as_incr_code {
+    return shift->XFD::Axis::as_incr_code( @_ );
 }
 
 sub XFD::Axis::descendant_or_self::incr_code_template {
     my $self = shift;
 
     ## node type tests only apply to certain event types, so
-    ## we only curry to those events.  This makes NodeType
+    ## we only curry to those events.  This makes EventType
     ## tests run-time noops, and simplifies others (node_name)
-    ## because they do not need to test $ctx->{NodeType}.
-    ## We always curry to EltTests to propogate the tests down
+    ## because they do not need to test $ctx->{EventType}.
+    ## We always curry to start_element to propogate the tests down
     ## the chain.  Unfortunately, this 
+
+    my %seen;
     my @curry_tests =
-        grep exists $child_curry_tests{$_},
-            $self->[_next]->curry_tests;
+        grep ! $seen{$_}++ && exists $child_curry_tests{$_},
+            $self->[_next]->curry_tests, "start_element";
+
+    die $self->op_type, " followed by ", $self->[_next]->op_type,
+        " can never match\n" unless @curry_tests;
+
+    return <<CODE_END if @curry_tests == 1;
+{ ## descendant-or-self::
+  my \$sub = sub {
+    my ( \$sub, \$postponement ) = \@_;
+
+    emit_trace_SAX_message "EventPath: queueing for descendant-or-self::" if is_tracing;
+    push \@{\$ctx->{ChildCtx}->{$curry_tests[0]}}, [ \$sub, \$sub, \$postponement ];
+    ## ...run it on this node (aka "self")
+    <NEXT>
+  };
+  \$sub->( \$sub, \$postponement );
+} # descendant-or-self::
+CODE_END
+
+    my $curry_code = join "\n",
+        map "    push \@{\$ctx->{ChildCtx}->{$_}}, \$queue_record;",
+            @curry_tests;
 
     return <<CODE_END;
-## descendant-or-self::
-{
-    my \$sub = sub {
-        my ( \$d, \$ctx, \$child_ctx ) = \@_;
-        <NEXT>
-    };
+{ ## descendant-or-self::
+  my \$sub = sub {
+    my ( \$sub, \$postponement ) = \@_;
 
-    ## Curry this action to the appropriate
-    ## descendant events, and...
-    push \@{\$child_ctx->{DescendantTests}}, \$sub;
-
-    ## run it on the context node (aka "self")
-    ## Can't use goto &\$sub because we need to fall
-    ## thru for unions
-    \$sub->( \@_ );
+    emit_trace_SAX_message "EventPath: queueing for descendant-or-self::" if is_tracing;
+    my \$queue_record = [ \$sub, \$sub, \$postponement ];
+$curry_code
+    ## ...run it on this node (aka "self")
+    <NEXT>
+  };
+  \$sub->( \$sub, \$postponement );
 } # descendant-or-self::
 CODE_END
 }
 
 
 ##########
-@XFD::Axis::self::ISA = qw( XFD::Axis );
+   @XFD::Axis::end::ISA = qw( XFD::Axis );
+sub XFD::Axis::end::principal_event_type  { "start_element" }
+sub XFD::Axis::end::possible_event_types  { qw( end_document end_element ) }
+sub XFD::Axis::end::useful_event_contexts { qw( start_document start_element ) }
 
+sub XFD::Axis::end::as_incr_code {  ## not ..._template()!
+    my $self    = shift;
+    my ( $context ) = @_;
+
+    $self->check_context( $context );
+
+    ## This is the lengthy one, as it needs to curry itself
+    ## until the end element rolls around, while playing
+    ## nicely with postponements.
+
+    ## TODO: check how this interacts with nodeset-returning
+    ## paths.
+
+    local $context->{Axis} = $self->op_type;
+
+    local $context->{PrincipalEventType} = $self->principal_event_type;
+    local $context->{PossibleEventTypes} = [ $self->possible_event_types ];
+
+    if ( ! defined $context->{precursorize_action} ) {
+        ## There are no predicates to leftwards
+        local $context->{action_wrapper} = <<CODE_END;
+push \@{\$ctx->{EndSubs}}, [ 
+  sub {
+    emit_trace_SAX_message "EventPath: running end::" if is_tracing;
+    <ACTION>
+  },
+];
+CODE_END
+
+        ## This is more like self:: than child::, no need to
+        ## wrap the next set of tests.
+        return $self->[_next]->as_incr_code( $context );
+    }
+    else {
+        ## There's a predicate to our left that's set the various
+        ## precursor... and action_wrapper, so dance with it...
+
+        ## the 'action' pushes the context on to the postponement's
+        ## list of contexts.  We want that to occur in the end_document.
+        my $action_code = <<CODE_END;
+push \@{\$ctx->{EndSubs}}, [ 
+  sub {
+    my ( \$ctx ) = \@_;
+    emit_trace_SAX_message "EventPath: running end::" if is_tracing;
+    <ACTION>
+  },
+  \$ctx
+];
+CODE_END
+
+        _replace_NEXT $action_code, $context->{precursorize_action}, "<ACTION>";
+
+        local $context->{precursorize_action} = $action_code;
+
+        return $self->[_next]->as_incr_code( $context );
+    }
+}
+
+
+##########
+   @XFD::Axis::end_document::ISA = qw( XFD::Axis );
+sub XFD::Axis::end_document::principal_event_type { "end_document" }
+sub XFD::Axis::end_document::possible_event_types { qw( end_document ) }
+sub XFD::Axis::end_document::useful_event_contexts { qw( start_document ) }
+
+sub XFD::Axis::end_document::as_incr_code {  ## not ..._template()!
+    my $self    = shift;
+    my ( $context ) = @_;
+
+    $self->check_context( $context );
+
+    ## This is the lengthy one, as it needs to curry itself
+    ## until the end element rolls around, while playing
+    ## nicely with postponements.
+
+    ## TODO: check how this interacts with nodeset-returning
+    ## paths.
+
+    local $context->{Axis} = $self->op_type;
+
+    local $context->{PrincipalEventType} = $self->principal_event_type;
+    local $context->{PossibleEventTypes} = [ $self->possible_event_types ];
+
+    if ( ! defined $context->{precursorize_action} ) {
+        ## There are no predicates to leftwards
+        local $context->{action_wrapper} = <<CODE_END;
+push \@{\$ctx->{EndSubs}}, [ 
+  sub {
+    emit_trace_SAX_message "EventPath: running end_document::" if is_tracing;
+    <ACTION>
+  },
+];
+CODE_END
+
+        ## This is more like self:: than child::, no need to
+        ## wrap the next set of tests.
+        return $self->[_next]->as_incr_code( $context );
+    }
+    else {
+        ## There's a predicate to our left that's set the various
+        ## precursor... and action_wrapper, so dance with it...
+
+        ## the 'action' pushes the context on to the postponement's
+        ## list of contexts.  We want that to occur in the end_document.
+        my $action_code = <<CODE_END;
+push \@{\$ctx->{EndSubs}}, [ 
+  sub {
+    my ( \$ctx ) = \@_;
+    emit_trace_SAX_message "EventPath: running end_document::" if is_tracing;
+    <ACTION>
+  },
+  \$ctx
+];
+CODE_END
+
+        _replace_NEXT $action_code, $context->{precursorize_action}, "<ACTION>";
+
+        local $context->{precursorize_action} = $action_code;
+
+        return $self->[_next]->as_incr_code( $context );
+    }
+}
+
+
+##########
+   @XFD::Axis::end_element::ISA = qw( XFD::Axis );
+sub XFD::Axis::end_element::possible_event_types { qw( end_element ) }
+sub XFD::Axis::end_element::useful_event_contexts { qw( start_document start_element ) }
+sub XFD::Axis::end_element::as_incr_code {  ## not ..._template()!
+    my $self    = shift;
+    my ( $context ) = @_;
+
+    $self->check_context( $context );
+
+    ## This is the lengthy one, as it needs to curry itself
+    ## until the end element rolls around, while playing
+    ## nicely with postponements.
+
+    ## end-element:: is a bit like child::, except it selects the
+    ## child's end element.  So, it queues up something for the
+    ## child's start_element event (so, for instance, the node_name
+    ## or attr tests or predicates, etc. run), which then queue
+    ## up the action for the child's EndSubs.
+
+    ## TODO: check how this interacts with nodeset-returning
+    ## paths.
+
+    local $context->{PrincipalEventType} = $self->principal_event_type;
+    local $context->{Axis} = $self->op_type;
+
+    if ( ! defined $context->{precursorize_action} ) {
+        ## There are no predicates to leftwards
+
+        local $context->{action_wrapper} = <<CODE_END;
+emit_trace_SAX_message "EventPath: queuing action to occur on end element for end_element::" if is_tracing;
+push \@{\$ctx->{EndSubs}}, [ 
+  sub {
+    emit_trace_SAX_message "EventPath: running end_element::" if is_tracing;
+    <ACTION>
+  },
+];
+CODE_END
+
+        my $code = <<CODE_END;
+{ ## end_element::
+  emit_trace_SAX_message "EventPath: queueing for end_element::" if is_tracing;
+  push \@{\$ctx->{ChildCtx}->{start_element}}, [
+    sub {
+      my ( \$postponement ) = \@_;
+      <NEXT>
+    },
+    \$postponement
+  ];
+} # end_element::
+CODE_END
+
+        _replace_NEXT $code, $self->[_next]->as_incr_code( $context );
+        return $code;
+    }
+    else {
+        ## There's a predicate to our left that's set the various
+        ## precursor... and action_wrapper, so dance with it...
+
+        ## the 'action' pushes the context on to the postponement's
+        ## list of contexts.  We want that to occur in the end_element.
+        my $action_code = <<CODE_END;
+emit_trace_SAX_message "EventPath: queueing for end_element::" if is_tracing;
+push \@{\$ctx->{EndSubs}}, [ 
+  sub {
+    emit_trace_SAX_message "EventPath: running end_element::" if is_tracing;
+    <ACTION>
+  },
+];
+CODE_END
+
+        _replace_NEXT $action_code, $context->{precursorize_action}, "<ACTION>";
+
+        local $context->{precursorize_action} = $action_code;
+
+        my $code = <<CODE_END;
+{ ## end_element::
+  emit_trace_SAX_message "EventPath: queueing for end_element::" if is_tracing;
+  push \@{\$ctx->{ChildCtx}->{start_element}}, [
+    sub {
+      my ( \$postponement ) = \@_;
+      <NEXT>
+    },
+    \$postponement
+  ];
+} # end_element::
+CODE_END
+
+        _replace_NEXT $code, $self->[_next]->as_incr_code( $context );
+
+        return $code;
+    }
+}
+
+
+##########
+   @XFD::Axis::self::ISA = qw( XFD::Axis );
+## don't define possible_node_types; pass the current ones
+## through from LHS to RHS.
 sub XFD::Axis::self::incr_code_template { "<NEXT>" }
 
 ##########
-##
-## all_nodes_or_self is a pseudo-axis not available from XPath expressions.
-## It's used to wrap XPath expressions that are returned from the
-## parsing (ie not location paths).  As such, unlike other axes, it
-## can be passed all of the code that is to be evaluated.
-##
-@XFD::Axis::all_nodes_or_self::ISA = qw( XFD::Axis );
+   @XFD::Axis::start::ISA = qw( XFD::Axis );
+sub XFD::Axis::start::principal_event_type { "start_element" }
+sub XFD::Axis::start::possible_event_types  {qw( start_document start_element )}
+sub XFD::Axis::start::useful_event_contexts {qw( start_document start_element )}
+sub XFD::Axis::start::incr_code_template { "<NEXT>" }
 
-sub XFD::Axis::all_nodes_or_self::new {
-    ++$self_curriers;
-    package XFD::Axis::all_nodes_or_self;
-        shift->SUPER::new( @_ );
-}
+##########
+   @XFD::Axis::start_document::ISA = qw( XFD::Axis );
+sub XFD::Axis::start_document::principal_event_type { "start_document" }
+sub XFD::Axis::start_document::possible_event_types { qw( start_document ) }
+sub XFD::Axis::start_document::useful_event_contexts { qw( start_document ) }
+sub XFD::Axis::start_document::incr_code_template { "<NEXT>" }
 
-sub XFD::Axis::all_nodes_or_self::incr_code_template {
+##########
+   @XFD::Axis::start_element::ISA = qw( XFD::Axis );
+sub XFD::Axis::start_element::possible_event_types { qw( start_element ) }
+sub XFD::Axis::start_element::useful_event_contexts { qw( start_document start_element ) }
+sub XFD::Axis::start_element::incr_code_template {
     my $self = shift;
 
-    ## node type tests only apply to certain event types, so
-    ## we only curry to those events.  This makes NodeType()
-    ## tests run-time noops, and simplifies others (node_name)
-    ## because they do not need to test $ctx->{NodeType}.
-    my @curry_tests = (
-        "EltTests",
-        grep $_ ne "EltTests", $self->[_next]->curry_tests
-    );
-
-    my $curry_code = join "\n",
-        map "        push \@{\$child_ctx->{$_}}, \$sub;",
-            @curry_tests;
-
     return <<CODE_END;
-## all-nodes-or-self:: (pseudo-axis for '.' steps)
-{
-    my \$sub;
-    \$sub = sub {
-        my ( \$d, \$ctx, \$child_ctx ) = \@_;
-
-my \$main_ctx = \$ctx; ## Hack to get precursorized exprs to use the correct ctx.
-
-        ## Curry this action to the appropriate
-        ## descendant events, and...
-$curry_code
-
-        ## ...test this node (self).
-        <NEXT>
-    };
-
-    ## run it on the context node (aka "self")
-    ## Can't use goto &\$sub because we need to fall
-    ## thru for unions
-    \$sub->( \@_ );
-} # all-nodes-or-self::
+## start_element::
+emit_trace_SAX_message "EventPath: queueing for start-element::" if is_tracing;
+push \@{\$ctx->{ChildCtx}->{start_element}}, [
+  sub {
+    my ( \$postponement ) = \@_;
+    <NEXT>
+  },
+  \$postponement
+];
 CODE_END
 }
 
 
-## This special API is called by the parser when the grammar
-## returns an expression.
-sub all_nodes_or_self($) {
-    my $next_code = ${$_[0]};
-
-    return \"" unless length $next_code;
-
-    _indent $next_code if _indentomatic;
-
-    ## We bend over backwards a bit to avoid using a closure by
-    ## making the self-propogating sub a plain old anon sub.
-    ## TODO: compile the anon sub out here.  Not doing that now because
-    ## this makes debugging easier.
-
-    my $i = $anon_sub_count++;
-    return \<<CODE_END;
-## all-nodes-or-self (an internal-use-only axis not available via XPath)
-\$d->{AnonSubs}->[$i] ||= sub {
-    my ( \$d, \$ctx, \$child_ctx ) = \@_;
-
-    ## Enqueue this function to be applied to all 
-    ## appropriate child nodes.
-    push \@{\$child_ctx->{EltTests}},     \$d->{AnonSubs}->[$i];
-    push \@{\$child_ctx->{CommentTests}}, \$d->{AnonSubs}->[$i];
-    push \@{\$child_ctx->{PITests}},      \$d->{AnonSubs}->[$i];
-    push \@{\$child_ctx->{TextTests}},    \$d->{AnonSubs}->[$i];
-    push \@{\$child_ctx->{AttrTests}},    \$d->{AnonSubs}->[$i];
-
-$next_code};
-
-goto &{\$d->{AnonSubs}->[$i]};
-CODE_END
-}
 ###############################################################################
 ##
 ## Node Type Tests
 ##
-@XFD::NodeType::ISA = qw( XFD::PathTest );
+@XFD::EventType::ISA = qw( XFD::PathTest );
 
-## These "tests" all work by only getting curried to the appropriate
-## event types :).
-sub XFD::NodeType::incr_code_template { "<NEXT>" }
+## Node type tests work by only getting
+## curried to the appropriate event types.
+sub XFD::EventType::incr_code_template { "<NEXT>" }
+sub XFD::EventType::op_type { shift->XFD::Op::op_type . "()" }
 
 ##########
-@XFD::NodeType::node::ISA = qw( XFD::NodeType );
-
-## This is a pass-through.
-sub XFD::NodeType::node::curry_tests {
+   @XFD::EventType::node::ISA = qw( XFD::EventType );
+sub XFD::EventType::node::curry_tests {
     my $self = shift;
     return $self->[_next]->curry_tests
         if defined $self->[_next];
 
     return @all_curry_tests;
 }
+##########
+   @XFD::EventType::text::ISA = qw( XFD::EventType );
+sub XFD::EventType::text::possible_event_types { "characters" }
+sub XFD::EventType::text::useful_event_contexts { qw( start_document start_element ) }
+sub XFD::EventType::text::curry_tests { "characters" }
+##########
+   @XFD::EventType::comment::ISA = qw( XFD::EventType );
+sub XFD::EventType::comment::possible_event_types { "comment" }
+sub XFD::EventType::comment::useful_event_contexts { qw( start_document start_element ) }
+sub XFD::EventType::comment::curry_tests { "comment" }
+##########
+   @XFD::EventType::processing_instruction::ISA = qw( XFD::EventType );
+sub XFD::EventType::processing_instruction::possible_event_types { "processing_instruction" }
+sub XFD::EventType::processing_instruction::useful_event_contexts { qw( start_document start_element ) }
+sub XFD::EventType::processing_instruction::curry_tests { "processing_instruction" }
+##########
+   @XFD::EventType::principal_event_type::ISA = qw( XFD::EventType );
+sub XFD::EventType::principal_event_type::incr_code_template {
+    my $self = shift;
+    my ( $context ) = @_;
 
-##########
-@XFD::NodeType::text::ISA = qw( XFD::NodeType );
-sub XFD::NodeType::text::curry_tests { "TextTests" }
-##########
-@XFD::NodeType::comment::ISA = qw( XFD::NodeType );
-sub XFD::NodeType::comment::curry_tests { "CommentTests" }
-##########
-@XFD::NodeType::processing_instruction::ISA = qw( XFD::NodeType );
-sub XFD::NodeType::processing_instruction::curry_tests { "PITests" }
-##########
+    my $desired_event_type = $context->{PrincipalEventType};
+    my @possible_event_types = @{$context->{PossibleEventTypes} || []};
+
+    return "<NEXT>"
+        if @possible_event_types == 1
+            && $possible_event_types[0] eq $desired_event_type;
+
+    local $" = ", ";
+    return <<CODE_END;
+## ::*
+## possible event types: @possible_event_types
+if ( \$ctx->{EventType} eq "$desired_event_type" ) {
+  emit_trace_SAX_message "EventPath: principal event type '*' found" if is_tracing;
+  <NEXT>
+} # ::*
+CODE_END
+}
 
 1;

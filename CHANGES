@@ -1,0 +1,5 @@
+CHANGES file for XML::Filter::Dispatcher
+
+0.4 Thu Dec 12 06:32:24 EST 2002
+    - Major rewrite.  Now supports most of XPath plus EventPath goodies.
+

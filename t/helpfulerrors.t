@@ -22,7 +22,6 @@ sub d {
 
     ## Going to &ok like this causes ok() to report d()'s call point,
     ## making it eaier to find the failing test.
-warn $@;
     unless ( $@ ) {
         @_ = ( "No exception thrown", $expected, $rule );
     }
@@ -40,7 +39,7 @@ my @tests = (
 sub { d "1 == 2", qr/'='.*'=='/   },
 sub { d "1 && 2", qr/'and'.*'&&'/ },
 sub { d "1 & 2",  qr/'and'.*'&'/ },
-sub { d "1 | 2",  qr/'\|'.*'or'/ },
+sub { d "1 | 2",  qr/NumericConstant.*union/ },
 sub { d "1 || 2", qr/'or'.*'\|\|'/ },
 );
 

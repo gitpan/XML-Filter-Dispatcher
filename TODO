@@ -1,0 +1,51 @@
+- test "as_hash( /a/[b] )"
+
+- test in-order delivery to handlers: "/a[b]" => $h
+
+- I think that the "last match wins" logic has been corrupted by
+  the predicate event queueing: it's probably "last predicate to
+  be checked wins" now.  Really need to label each rule as it's parsed
+  or something so it can stain PendingActions with it's position so
+  the right action can be chosen.  This should also open the door
+  to mulitvalued action ratings so that XSLT match collision
+  resolution logic can be implemented.
+
+- allow alternate grammars
+
+- Don't pass or require $postponement unless one is needed.
+
+- Move parsing code out of new in to compile() and have compile_to_Perl
+  return the source code of a subclass.  Document this, and offer an
+  option to set the class name, both for user self-determination and for
+  the ability to prevent leaking when the application wants to do lots
+  and lots of different rule sets.  Try to support this approach for
+  stylesheet language implementors.
+  - new() should return a subclass
+
+- Optimize the ops tree by combining identical siblings in to
+  one: need to compile all rules in to a single union than allow the
+  union to push itself down a level.
+
+- See if we can avoid conflicts in the precursorization code; a quick
+  glance shows that //text[self::text()] seems to be reusing the
+  Precursors positions.
+
+- Centralize the generation of queueing the curried functions
+
+- Extract more helper subs in to a runtime to reduce the amount of
+  generated code.
+
+- Carve up AsHashHandler in to code templates and use them "bare" in
+  X::F::D's code generator to save the extra sub call.
+
+- Event queuing.
+  - Needed when xcut() or any precursors found
+  - Offer an option to disable queuing and allow unordered matches
+    - speed enhancer for XML->PerlDataStructure conversions
+  - Offer an option to limit queue length
+      undef => unlimited (default)
+      0     => none allowed, compile time errors
+      N     => limit to N events
+      -N    => error
+
+- add an AllPathsAbsolute option to force "foo" to behave like "/foo".

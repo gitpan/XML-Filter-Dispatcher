@@ -14,3 +14,4 @@ CVS/.*
 \.png$
 \.dot$
 \.output$
+\.cache\.

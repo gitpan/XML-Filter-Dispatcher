@@ -112,7 +112,9 @@ sub {
     run(
         XML::Filter::Dispatcher->new(
             Rules => [
-                'string(@hairstyle)' => sub { $styles{xresult()} = 1 },
+                'stooge[@hairstyle]' => [
+                    'string(@hairstyle)' => sub { $styles{xvalue()} = 1 }
+                ],
             ],
         )
     );
@@ -120,14 +122,15 @@ sub {
 
     ok scalar keys %styles, 4;
 },
-
 sub {
     my %styles;
 
     run(
         XML::Filter::Dispatcher->new(
             Rules => [
-                'string(attitude)' => sub { $styles{xresult()} = 1 },
+                'stooge[attitude]' => [
+                    'string(attitude)' => sub { $styles{xvalue()} = 1 },
+                ],
             ],
         )
     );
@@ -142,10 +145,12 @@ sub {
     run(
         XML::Filter::Dispatcher->new(
             Rules => [
-                'concat( @name, "=>", @hairstyle )' => 
-                    sub {
-                        push @styles, $1 if xresult =~ /(.+=>.+)/;
-                    },
+                'stooge' => [
+                    'concat( @name, "=>", @hairstyle )' => 
+                        sub {
+                            push @styles, $1 if xvalue =~ /(.+=>.+)/;
+                        },
+                ],
             ],
         )
     );
@@ -159,9 +164,11 @@ sub {
     run(
         XML::Filter::Dispatcher->new(
             Rules => [
-                'concat(@hairstyle,"=>",attitude)' => sub {
-                    $styles{$1} = $2 if xresult() =~ /(.+)=>(.+)/;
-                },
+                'stooge' => [
+                    'concat(@hairstyle,"=>",attitude)' => sub {
+                        $styles{$1} = $2 if xvalue() =~ /(.+)=>(.+)/;
+                    },
+                ],
             ],
         )
     );
@@ -169,7 +176,6 @@ sub {
 
     ok scalar keys %styles, 4;
 },
-
 );
 
 plan tests => scalar @tests;

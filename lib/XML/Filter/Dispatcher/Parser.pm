@@ -1,6 +1,6 @@
 ####################################################################
 #
-#    This file was generated using Parse::Yapp version 1.05.
+#    This file was generated using Parse::Yapp version 1.02.
 #
 #        Don't edit this file, use source file instead.
 #
@@ -25,7 +25,7 @@ use strict;
 #
 # This notice should remain unchanged.
 #
-# (c) Copyright 1998-2001 Francois Desarmenien, all rights reserved.
+# (c) Copyright 1998-1999 Francois Desarmenien, all rights reserved.
 # (see the pod text in Parse::Yapp module for use and distribution rights)
 #
 
@@ -37,7 +37,7 @@ use strict;
 
 use vars qw ( $VERSION $COMPATIBLE $FILENAME );
 
-$VERSION = '1.05';
+$VERSION = '1.02';
 $COMPATIBLE = '0.07';
 $FILENAME=__FILE__;
 
@@ -489,7 +489,7 @@ sub _Parse {
 #End of include--------------------------------------------------
 
 
-#line 3 "xfdxpath.yp"
+#line 9 "xfdxpath.yp"
 
     use Carp;
     use UNIVERSAL;
@@ -524,17 +524,7 @@ die join(
     }
 
     sub _step {
-        my ( $p, $axis, $node_test, @predicates ) = @_;
-
-        shift @predicates if @predicates && ! defined $predicates[0];
-
-        warn "axis not an op: '$axis'" if defined $axis && !ref $axis;
-        warn "node test not an op: '$node_test'" if defined $node_test && !ref $node_test;
-
-        my @ops;
-        push @ops, $axis if defined $axis && ref $axis;
-        push @ops, $node_test if $node_test && ref $node_test;
-        push @ops, @predicates;
+        my @ops = grep $_, @_;
 
         for ( 0..$#ops-1 ) {
             $ops[$_]->set_next( $ops[$_+1] );
@@ -549,7 +539,7 @@ sub new {
         ref($class)
     and $class=ref($class);
 
-    my($self)=$class->SUPER::new( yyversion => '1.05',
+    my($self)=$class->SUPER::new( yyversion => '1.02',
                                   yystates =>
 [
 	{#State 0
@@ -561,36 +551,35 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'union_expr' => 1,
 			'relative_location_path' => 3,
+			'relational_expr' => 16,
 			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'or_expr' => 18,
 			'and_expr' => 9,
+			'unary_expr' => 21,
 			'equality_expr' => 10,
+			'path_expr' => 25,
+			'expr' => 24,
 			'additive_expr' => 12,
 			'location_path' => 13,
-			'step' => 15,
-			'relational_expr' => 16,
-			'function_call' => 17,
-			'multiplicative_expr' => 18,
-			'or_expr' => 19,
-			'unary_expr' => 22,
-			'expr' => 25,
-			'path_expr' => 26,
-			'absolute_location_path' => 29,
-			'axis' => 28
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 1
 		ACTIONS => {
-			'VBAR' => 30
+			'VBAR' => 29
 		},
 		DEFAULT => -25
 	},
@@ -599,15 +588,15 @@ sub new {
 	},
 	{#State 3
 		ACTIONS => {
-			'SLASH' => 31,
-			'SLASH_SLASH' => 32
+			'SLASH' => 30,
+			'SLASH_SLASH' => 31
 		},
 		DEFAULT => -34
 	},
 	{#State 4
 		DEFAULT => -48,
 		GOTOS => {
-			'predicates' => 33
+			'predicates' => 32
 		}
 	},
 	{#State 5
@@ -615,7 +604,7 @@ sub new {
 	},
 	{#State 6
 		ACTIONS => {
-			'COLON_COLON' => 34
+			'COLON_COLON' => 33
 		}
 	},
 	{#State 7
@@ -626,17 +615,17 @@ sub new {
 	},
 	{#State 9
 		ACTIONS => {
-			'AND' => 35,
-			'AMP' => 36,
-			'AMP_AMP' => 37
+			'AND' => 34,
+			'AMP' => 35,
+			'AMP_AMP' => 36
 		},
 		DEFAULT => -2
 	},
 	{#State 10
 		ACTIONS => {
-			'EQUALS' => 38,
-			'BANG_EQUALS' => 40,
-			'EQUALS_EQUALS' => 39
+			'EQUALS' => 37,
+			'BANG_EQUALS' => 39,
+			'EQUALS_EQUALS' => 38
 		},
 		DEFAULT => -5
 	},
@@ -651,20 +640,20 @@ sub new {
 			'COMMENT' => -45,
 			'NAME_COLON_STAR' => -45,
 			'QNAME' => -45,
-			'AT' => 24,
+			'AT' => 23,
 			'NODE' => -45
 		},
 		DEFAULT => -36,
 		GOTOS => {
-			'relative_location_path' => 41,
-			'axis' => 28,
+			'relative_location_path' => 40,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
 	{#State 12
 		ACTIONS => {
-			'PLUS' => 42,
-			'MINUS' => 43
+			'PLUS' => 41,
+			'MINUS' => 42
 		},
 		DEFAULT => -13
 	},
@@ -673,7 +662,7 @@ sub new {
 	},
 	{#State 14
 		ACTIONS => {
-			'LPAR' => 44
+			'LPAR' => 43
 		}
 	},
 	{#State 15
@@ -681,52 +670,49 @@ sub new {
 	},
 	{#State 16
 		ACTIONS => {
-			'LT' => 47,
-			'GT' => 45,
-			'LTE' => 48,
-			'GTE' => 46
+			'LT' => 46,
+			'GT' => 44,
+			'LTE' => 47,
+			'GTE' => 45
 		},
 		DEFAULT => -9
 	},
 	{#State 17
-		DEFAULT => -54
-	},
-	{#State 18
 		ACTIONS => {
-			'MULTIPLY' => 49,
-			'MOD' => 50,
-			'DIV' => 51
+			'MULTIPLY' => 48,
+			'MOD' => 49,
+			'DIV' => 50
 		},
 		DEFAULT => -18
 	},
-	{#State 19
+	{#State 18
 		ACTIONS => {
-			'VBAR_VBAR' => 52,
-			'OR' => 53
+			'VBAR_VBAR' => 51,
+			'OR' => 52
 		},
 		DEFAULT => -1
 	},
-	{#State 20
+	{#State 19
 		DEFAULT => -52
 	},
-	{#State 21
+	{#State 20
 		ACTIONS => {
 			'AXIS_NAME' => 6,
 			'DOT' => 8,
 			'DOT_DOT' => 7,
-			'AT' => 24
+			'AT' => 23
 		},
 		DEFAULT => -45,
 		GOTOS => {
-			'relative_location_path' => 54,
-			'axis' => 28,
+			'relative_location_path' => 53,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
-	{#State 22
+	{#State 21
 		DEFAULT => -21
 	},
-	{#State 23
+	{#State 22
 		ACTIONS => {
 			'NUMBER' => 2,
 			'AXIS_NAME' => 6,
@@ -735,91 +721,89 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'union_expr' => 1,
 			'relative_location_path' => 3,
 			'primary_expr' => 4,
-			'function_call' => 17,
-			'unary_expr' => 55,
-			'path_expr' => 26,
+			'unary_expr' => 54,
+			'path_expr' => 25,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
-	{#State 24
+	{#State 23
 		DEFAULT => -47
 	},
-	{#State 25
+	{#State 24
 		ACTIONS => {
-			'' => 56
+			'' => 55
 		}
 	},
-	{#State 26
+	{#State 25
 		DEFAULT => -27
+	},
+	{#State 26
+		ACTIONS => {
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'relational_expr' => 16,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'or_expr' => 18,
+			'and_expr' => 9,
+			'unary_expr' => 21,
+			'equality_expr' => 10,
+			'expr' => 56,
+			'path_expr' => 25,
+			'additive_expr' => 12,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
+		}
 	},
 	{#State 27
 		ACTIONS => {
-			'NUMBER' => 2,
-			'AXIS_NAME' => 6,
-			'DOLLAR_QNAME' => 5,
-			'DOT' => 8,
-			'DOT_DOT' => 7,
-			'SLASH' => 11,
-			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'QNAME' => 63,
+			'NODE' => 64,
+			'COMMENT' => 61,
+			'PI' => 60,
+			'TEXT' => 59,
+			'STAR' => 58,
+			'NAME_COLON_STAR' => 62
 		},
-		DEFAULT => -45,
 		GOTOS => {
-			'union_expr' => 1,
-			'relative_location_path' => 3,
-			'primary_expr' => 4,
-			'and_expr' => 9,
-			'equality_expr' => 10,
-			'additive_expr' => 12,
-			'location_path' => 13,
-			'step' => 15,
-			'relational_expr' => 16,
-			'function_call' => 17,
-			'multiplicative_expr' => 18,
-			'or_expr' => 19,
-			'unary_expr' => 22,
-			'path_expr' => 26,
-			'expr' => 57,
-			'absolute_location_path' => 29,
-			'axis' => 28
+			'node_test' => 57
 		}
 	},
 	{#State 28
-		ACTIONS => {
-			'QNAME' => 64,
-			'NODE' => 65,
-			'COMMENT' => 62,
-			'PI' => 61,
-			'TEXT' => 60,
-			'STAR' => 59,
-			'NAME_COLON_STAR' => 63
-		},
-		GOTOS => {
-			'node_test' => 58
-		}
-	},
-	{#State 29
 		DEFAULT => -35
 	},
-	{#State 30
+	{#State 29
 		ACTIONS => {
 			'NUMBER' => 2,
 			'AXIS_NAME' => 6,
@@ -828,21 +812,33 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'relative_location_path' => 3,
-			'path_expr' => 66,
+			'path_expr' => 65,
 			'primary_expr' => 4,
-			'function_call' => 17,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
+		}
+	},
+	{#State 30
+		ACTIONS => {
+			'AXIS_NAME' => 6,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'AT' => 23
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'axis' => 27,
+			'step' => 66
 		}
 	},
 	{#State 31
@@ -850,40 +846,59 @@ sub new {
 			'AXIS_NAME' => 6,
 			'DOT' => 8,
 			'DOT_DOT' => 7,
-			'AT' => 24
+			'AT' => 23
 		},
 		DEFAULT => -45,
 		GOTOS => {
-			'axis' => 28,
+			'axis' => 27,
 			'step' => 67
 		}
 	},
 	{#State 32
 		ACTIONS => {
-			'AXIS_NAME' => 6,
-			'DOT' => 8,
-			'DOT_DOT' => 7,
-			'AT' => 24
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'axis' => 28,
-			'step' => 68
-		}
-	},
-	{#State 33
-		ACTIONS => {
-			'SLASH' => 69,
-			'SLASH_SLASH' => 71,
-			'LSQB' => 72
+			'SLASH' => 68,
+			'SLASH_SLASH' => 70,
+			'LSQB' => 71
 		},
 		DEFAULT => -31,
 		GOTOS => {
-			'segment' => 70
+			'segment' => 69
 		}
 	},
-	{#State 34
+	{#State 33
 		DEFAULT => -46
+	},
+	{#State 34
+		ACTIONS => {
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'relational_expr' => 16,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
+			'equality_expr' => 72,
+			'path_expr' => 25,
+			'additive_expr' => 12,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
+		}
 	},
 	{#State 35
 		ACTIONS => {
@@ -894,11 +909,11 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
@@ -906,15 +921,14 @@ sub new {
 			'relative_location_path' => 3,
 			'relational_expr' => 16,
 			'primary_expr' => 4,
-			'multiplicative_expr' => 18,
-			'function_call' => 17,
-			'unary_expr' => 22,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
 			'equality_expr' => 73,
-			'path_expr' => 26,
+			'path_expr' => 25,
 			'additive_expr' => 12,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
@@ -927,11 +941,11 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
@@ -939,15 +953,14 @@ sub new {
 			'relative_location_path' => 3,
 			'relational_expr' => 16,
 			'primary_expr' => 4,
-			'multiplicative_expr' => 18,
-			'function_call' => 17,
-			'unary_expr' => 22,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
 			'equality_expr' => 74,
-			'path_expr' => 26,
+			'path_expr' => 25,
 			'additive_expr' => 12,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
@@ -960,27 +973,25 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'union_expr' => 1,
 			'relative_location_path' => 3,
-			'relational_expr' => 16,
+			'relational_expr' => 75,
 			'primary_expr' => 4,
-			'multiplicative_expr' => 18,
-			'function_call' => 17,
-			'unary_expr' => 22,
-			'equality_expr' => 75,
-			'path_expr' => 26,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
+			'path_expr' => 25,
 			'additive_expr' => 12,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
@@ -993,11 +1004,11 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
@@ -1005,14 +1016,13 @@ sub new {
 			'relative_location_path' => 3,
 			'relational_expr' => 76,
 			'primary_expr' => 4,
-			'multiplicative_expr' => 18,
-			'function_call' => 17,
-			'unary_expr' => 22,
-			'path_expr' => 26,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
+			'path_expr' => 25,
 			'additive_expr' => 12,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
@@ -1025,11 +1035,11 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
@@ -1037,18 +1047,24 @@ sub new {
 			'relative_location_path' => 3,
 			'relational_expr' => 77,
 			'primary_expr' => 4,
-			'multiplicative_expr' => 18,
-			'function_call' => 17,
-			'unary_expr' => 22,
-			'path_expr' => 26,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
+			'path_expr' => 25,
 			'additive_expr' => 12,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
 	{#State 40
+		ACTIONS => {
+			'SLASH' => 30,
+			'SLASH_SLASH' => 31
+		},
+		DEFAULT => -37
+	},
+	{#State 41
 		ACTIONS => {
 			'NUMBER' => 2,
 			'AXIS_NAME' => 6,
@@ -1057,35 +1073,25 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'union_expr' => 1,
 			'relative_location_path' => 3,
-			'relational_expr' => 78,
 			'primary_expr' => 4,
-			'multiplicative_expr' => 18,
-			'function_call' => 17,
-			'unary_expr' => 22,
-			'path_expr' => 26,
-			'additive_expr' => 12,
+			'multiplicative_expr' => 78,
+			'unary_expr' => 21,
+			'path_expr' => 25,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
-	},
-	{#State 41
-		ACTIONS => {
-			'SLASH' => 31,
-			'SLASH_SLASH' => 32
-		},
-		DEFAULT => -37
 	},
 	{#State 42
 		ACTIONS => {
@@ -1096,11 +1102,11 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
@@ -1108,12 +1114,11 @@ sub new {
 			'relative_location_path' => 3,
 			'primary_expr' => 4,
 			'multiplicative_expr' => 79,
-			'function_call' => 17,
-			'unary_expr' => 22,
-			'path_expr' => 26,
+			'unary_expr' => 21,
+			'path_expr' => 25,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
@@ -1126,25 +1131,33 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'RPAR' => -55,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'union_expr' => 1,
 			'relative_location_path' => 3,
 			'primary_expr' => 4,
-			'multiplicative_expr' => 80,
-			'function_call' => 17,
-			'unary_expr' => 22,
-			'path_expr' => 26,
+			'and_expr' => 9,
+			'args' => 80,
+			'equality_expr' => 10,
+			'additive_expr' => 12,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
-			'step' => 15
+			'step' => 15,
+			'opt_args' => 81,
+			'relational_expr' => 16,
+			'multiplicative_expr' => 17,
+			'or_expr' => 18,
+			'unary_expr' => 21,
+			'expr' => 82,
+			'path_expr' => 25,
+			'absolute_location_path' => 28,
+			'axis' => 27
 		}
 	},
 	{#State 44
@@ -1156,34 +1169,25 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'RPAR' => -56,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'union_expr' => 1,
 			'relative_location_path' => 3,
 			'primary_expr' => 4,
-			'and_expr' => 9,
-			'args' => 81,
-			'equality_expr' => 10,
-			'additive_expr' => 12,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
+			'additive_expr' => 83,
+			'path_expr' => 25,
 			'location_path' => 13,
-			'step' => 15,
-			'opt_args' => 82,
-			'relational_expr' => 16,
-			'function_call' => 17,
-			'multiplicative_expr' => 18,
-			'or_expr' => 19,
-			'unary_expr' => 22,
-			'expr' => 83,
-			'path_expr' => 26,
-			'absolute_location_path' => 29,
-			'axis' => 28
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 45
@@ -1195,25 +1199,24 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'union_expr' => 1,
 			'relative_location_path' => 3,
 			'primary_expr' => 4,
-			'multiplicative_expr' => 18,
-			'function_call' => 17,
-			'unary_expr' => 22,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
 			'additive_expr' => 84,
-			'path_expr' => 26,
+			'path_expr' => 25,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
@@ -1226,25 +1229,24 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'union_expr' => 1,
 			'relative_location_path' => 3,
 			'primary_expr' => 4,
-			'multiplicative_expr' => 18,
-			'function_call' => 17,
-			'unary_expr' => 22,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
 			'additive_expr' => 85,
-			'path_expr' => 26,
+			'path_expr' => 25,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
@@ -1257,25 +1259,24 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'union_expr' => 1,
 			'relative_location_path' => 3,
 			'primary_expr' => 4,
-			'multiplicative_expr' => 18,
-			'function_call' => 17,
-			'unary_expr' => 22,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
 			'additive_expr' => 86,
-			'path_expr' => 26,
+			'path_expr' => 25,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
@@ -1288,25 +1289,22 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'union_expr' => 1,
 			'relative_location_path' => 3,
 			'primary_expr' => 4,
-			'multiplicative_expr' => 18,
-			'function_call' => 17,
-			'unary_expr' => 22,
-			'additive_expr' => 87,
-			'path_expr' => 26,
+			'unary_expr' => 87,
+			'path_expr' => 25,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
@@ -1319,23 +1317,22 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'union_expr' => 1,
 			'relative_location_path' => 3,
 			'primary_expr' => 4,
-			'function_call' => 17,
 			'unary_expr' => 88,
-			'path_expr' => 26,
+			'path_expr' => 25,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
@@ -1348,23 +1345,22 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'union_expr' => 1,
 			'relative_location_path' => 3,
 			'primary_expr' => 4,
-			'function_call' => 17,
 			'unary_expr' => 89,
-			'path_expr' => 26,
+			'path_expr' => 25,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
@@ -1377,23 +1373,27 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'union_expr' => 1,
 			'relative_location_path' => 3,
+			'relational_expr' => 16,
 			'primary_expr' => 4,
-			'function_call' => 17,
-			'unary_expr' => 90,
-			'path_expr' => 26,
+			'multiplicative_expr' => 17,
+			'and_expr' => 90,
+			'unary_expr' => 21,
+			'equality_expr' => 10,
+			'path_expr' => 25,
+			'additive_expr' => 12,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
@@ -1406,11 +1406,11 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
@@ -1418,79 +1418,49 @@ sub new {
 			'relative_location_path' => 3,
 			'relational_expr' => 16,
 			'primary_expr' => 4,
-			'multiplicative_expr' => 18,
-			'function_call' => 17,
+			'multiplicative_expr' => 17,
 			'and_expr' => 91,
-			'unary_expr' => 22,
+			'unary_expr' => 21,
 			'equality_expr' => 10,
-			'path_expr' => 26,
+			'path_expr' => 25,
 			'additive_expr' => 12,
 			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
+			'absolute_location_path' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
 	},
 	{#State 53
 		ACTIONS => {
-			'NUMBER' => 2,
-			'AXIS_NAME' => 6,
-			'DOLLAR_QNAME' => 5,
-			'DOT' => 8,
-			'DOT_DOT' => 7,
-			'SLASH' => 11,
-			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'union_expr' => 1,
-			'relative_location_path' => 3,
-			'relational_expr' => 16,
-			'primary_expr' => 4,
-			'multiplicative_expr' => 18,
-			'function_call' => 17,
-			'and_expr' => 92,
-			'unary_expr' => 22,
-			'equality_expr' => 10,
-			'path_expr' => 26,
-			'additive_expr' => 12,
-			'location_path' => 13,
-			'absolute_location_path' => 29,
-			'axis' => 28,
-			'step' => 15
-		}
-	},
-	{#State 54
-		ACTIONS => {
-			'SLASH' => 31,
-			'SLASH_SLASH' => 32
+			'SLASH' => 30,
+			'SLASH_SLASH' => 31
 		},
 		DEFAULT => -38
 	},
-	{#State 55
+	{#State 54
 		DEFAULT => -26
 	},
-	{#State 56
+	{#State 55
 		DEFAULT => -0
 	},
-	{#State 57
+	{#State 56
 		ACTIONS => {
-			'RPAR' => 93
+			'RPAR' => 92
+		}
+	},
+	{#State 57
+		DEFAULT => -48,
+		GOTOS => {
+			'predicates' => 93
 		}
 	},
 	{#State 58
-		DEFAULT => -48,
-		GOTOS => {
-			'predicates' => 94
-		}
+		DEFAULT => -60
 	},
 	{#State 59
-		DEFAULT => -61
+		ACTIONS => {
+			'LPAR' => 94
+		}
 	},
 	{#State 60
 		ACTIONS => {
@@ -1503,62 +1473,57 @@ sub new {
 		}
 	},
 	{#State 62
+		DEFAULT => -61
+	},
+	{#State 63
+		DEFAULT => -59
+	},
+	{#State 64
 		ACTIONS => {
 			'LPAR' => 97
 		}
 	},
-	{#State 63
-		DEFAULT => -62
-	},
-	{#State 64
-		DEFAULT => -60
-	},
 	{#State 65
-		ACTIONS => {
-			'LPAR' => 98
-		}
-	},
-	{#State 66
 		DEFAULT => -28
 	},
-	{#State 67
+	{#State 66
 		DEFAULT => -40
 	},
-	{#State 68
+	{#State 67
 		DEFAULT => -41
 	},
-	{#State 69
+	{#State 68
 		ACTIONS => {
 			'AXIS_NAME' => 6,
 			'DOT' => 8,
 			'DOT_DOT' => 7,
-			'AT' => 24
+			'AT' => 23
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'relative_location_path' => 98,
+			'axis' => 27,
+			'step' => 15
+		}
+	},
+	{#State 69
+		DEFAULT => -30
+	},
+	{#State 70
+		ACTIONS => {
+			'AXIS_NAME' => 6,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'AT' => 23
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'relative_location_path' => 99,
-			'axis' => 28,
+			'axis' => 27,
 			'step' => 15
 		}
-	},
-	{#State 70
-		DEFAULT => -30
 	},
 	{#State 71
-		ACTIONS => {
-			'AXIS_NAME' => 6,
-			'DOT' => 8,
-			'DOT_DOT' => 7,
-			'AT' => 24
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'relative_location_path' => 100,
-			'axis' => 28,
-			'step' => 15
-		}
-	},
-	{#State 72
 		ACTIONS => {
 			'NUMBER' => 2,
 			'AXIS_NAME' => 6,
@@ -1567,188 +1532,192 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'union_expr' => 1,
 			'relative_location_path' => 3,
+			'relational_expr' => 16,
 			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'or_expr' => 18,
 			'and_expr' => 9,
+			'unary_expr' => 21,
 			'equality_expr' => 10,
+			'expr' => 100,
+			'path_expr' => 25,
 			'additive_expr' => 12,
 			'location_path' => 13,
-			'step' => 15,
-			'relational_expr' => 16,
-			'function_call' => 17,
-			'multiplicative_expr' => 18,
-			'or_expr' => 19,
-			'unary_expr' => 22,
-			'path_expr' => 26,
-			'expr' => 101,
-			'absolute_location_path' => 29,
-			'axis' => 28
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
-	{#State 73
+	{#State 72
 		ACTIONS => {
-			'EQUALS' => 38,
-			'BANG_EQUALS' => 40,
-			'EQUALS_EQUALS' => 39
+			'EQUALS' => 37,
+			'BANG_EQUALS' => 39,
+			'EQUALS_EQUALS' => 38
 		},
 		DEFAULT => -6
 	},
-	{#State 74
+	{#State 73
 		ACTIONS => {
-			'EQUALS' => 38,
-			'BANG_EQUALS' => 40,
-			'EQUALS_EQUALS' => 39
+			'EQUALS' => 37,
+			'BANG_EQUALS' => 39,
+			'EQUALS_EQUALS' => 38
 		},
 		DEFAULT => -8
 	},
-	{#State 75
+	{#State 74
 		ACTIONS => {
-			'EQUALS' => 38,
-			'BANG_EQUALS' => 40,
-			'EQUALS_EQUALS' => 39
+			'EQUALS' => 37,
+			'BANG_EQUALS' => 39,
+			'EQUALS_EQUALS' => 38
 		},
 		DEFAULT => -7
 	},
-	{#State 76
+	{#State 75
 		ACTIONS => {
-			'LT' => 47,
-			'GT' => 45,
-			'LTE' => 48,
-			'GTE' => 46
+			'LT' => 46,
+			'GT' => 44,
+			'LTE' => 47,
+			'GTE' => 45
 		},
 		DEFAULT => -10
 	},
-	{#State 77
+	{#State 76
 		ACTIONS => {
-			'LT' => 47,
-			'GT' => 45,
-			'LTE' => 48,
-			'GTE' => 46
+			'LT' => 46,
+			'GT' => 44,
+			'LTE' => 47,
+			'GTE' => 45
 		},
 		DEFAULT => -12
 	},
-	{#State 78
+	{#State 77
 		ACTIONS => {
-			'LT' => 47,
-			'GT' => 45,
-			'LTE' => 48,
-			'GTE' => 46
+			'LT' => 46,
+			'GT' => 44,
+			'LTE' => 47,
+			'GTE' => 45
 		},
 		DEFAULT => -11
 	},
-	{#State 79
+	{#State 78
 		ACTIONS => {
-			'MULTIPLY' => 49,
-			'MOD' => 50,
-			'DIV' => 51
+			'MULTIPLY' => 48,
+			'MOD' => 49,
+			'DIV' => 50
 		},
 		DEFAULT => -19
 	},
-	{#State 80
+	{#State 79
 		ACTIONS => {
-			'MULTIPLY' => 49,
-			'MOD' => 50,
-			'DIV' => 51
+			'MULTIPLY' => 48,
+			'MOD' => 49,
+			'DIV' => 50
 		},
 		DEFAULT => -20
 	},
+	{#State 80
+		ACTIONS => {
+			'COMMA' => 101
+		},
+		DEFAULT => -56
+	},
 	{#State 81
 		ACTIONS => {
-			'COMMA' => 102
-		},
-		DEFAULT => -57
+			'RPAR' => 102
+		}
 	},
 	{#State 82
+		DEFAULT => -57
+	},
+	{#State 83
+		ACTIONS => {
+			'PLUS' => 41,
+			'MINUS' => 42
+		},
+		DEFAULT => -15
+	},
+	{#State 84
+		ACTIONS => {
+			'PLUS' => 41,
+			'MINUS' => 42
+		},
+		DEFAULT => -17
+	},
+	{#State 85
+		ACTIONS => {
+			'PLUS' => 41,
+			'MINUS' => 42
+		},
+		DEFAULT => -14
+	},
+	{#State 86
+		ACTIONS => {
+			'PLUS' => 41,
+			'MINUS' => 42
+		},
+		DEFAULT => -16
+	},
+	{#State 87
+		DEFAULT => -22
+	},
+	{#State 88
+		DEFAULT => -24
+	},
+	{#State 89
+		DEFAULT => -23
+	},
+	{#State 90
+		ACTIONS => {
+			'AND' => 34,
+			'AMP' => 35,
+			'AMP_AMP' => 36
+		},
+		DEFAULT => -4
+	},
+	{#State 91
+		ACTIONS => {
+			'AND' => 34,
+			'AMP' => 35,
+			'AMP_AMP' => 36
+		},
+		DEFAULT => -3
+	},
+	{#State 92
+		DEFAULT => -51
+	},
+	{#State 93
+		ACTIONS => {
+			'LSQB' => 71
+		},
+		DEFAULT => -42
+	},
+	{#State 94
 		ACTIONS => {
 			'RPAR' => 103
 		}
 	},
-	{#State 83
-		DEFAULT => -58
-	},
-	{#State 84
-		ACTIONS => {
-			'PLUS' => 42,
-			'MINUS' => 43
-		},
-		DEFAULT => -15
-	},
-	{#State 85
-		ACTIONS => {
-			'PLUS' => 42,
-			'MINUS' => 43
-		},
-		DEFAULT => -17
-	},
-	{#State 86
-		ACTIONS => {
-			'PLUS' => 42,
-			'MINUS' => 43
-		},
-		DEFAULT => -14
-	},
-	{#State 87
-		ACTIONS => {
-			'PLUS' => 42,
-			'MINUS' => 43
-		},
-		DEFAULT => -16
-	},
-	{#State 88
-		DEFAULT => -22
-	},
-	{#State 89
-		DEFAULT => -24
-	},
-	{#State 90
-		DEFAULT => -23
-	},
-	{#State 91
-		ACTIONS => {
-			'AND' => 35,
-			'AMP' => 36,
-			'AMP_AMP' => 37
-		},
-		DEFAULT => -4
-	},
-	{#State 92
-		ACTIONS => {
-			'AND' => 35,
-			'AMP' => 36,
-			'AMP_AMP' => 37
-		},
-		DEFAULT => -3
-	},
-	{#State 93
-		DEFAULT => -51
-	},
-	{#State 94
-		ACTIONS => {
-			'LSQB' => 72
-		},
-		DEFAULT => -42
-	},
 	{#State 95
 		ACTIONS => {
-			'RPAR' => 104
+			'LITERAL' => 104
+		},
+		DEFAULT => -66,
+		GOTOS => {
+			'opt_literal' => 105
 		}
 	},
 	{#State 96
 		ACTIONS => {
-			'LITERAL' => 105
-		},
-		DEFAULT => -67,
-		GOTOS => {
-			'opt_literal' => 106
+			'RPAR' => 106
 		}
 	},
 	{#State 97
@@ -1758,29 +1727,24 @@ sub new {
 	},
 	{#State 98
 		ACTIONS => {
-			'RPAR' => 108
-		}
-	},
-	{#State 99
-		ACTIONS => {
-			'SLASH' => 31,
-			'SLASH_SLASH' => 32
+			'SLASH' => 30,
+			'SLASH_SLASH' => 31
 		},
 		DEFAULT => -32
 	},
-	{#State 100
+	{#State 99
 		ACTIONS => {
-			'SLASH' => 31,
-			'SLASH_SLASH' => 32
+			'SLASH' => 30,
+			'SLASH_SLASH' => 31
 		},
 		DEFAULT => -33
 	},
-	{#State 101
+	{#State 100
 		ACTIONS => {
-			'RSQB' => 109
+			'RSQB' => 108
 		}
 	},
-	{#State 102
+	{#State 101
 		ACTIONS => {
 			'NUMBER' => 2,
 			'AXIS_NAME' => 6,
@@ -1789,61 +1753,60 @@ sub new {
 			'DOT_DOT' => 7,
 			'SLASH' => 11,
 			'FUNCTION_NAME' => 14,
-			'LITERAL' => 20,
-			'SLASH_SLASH' => 21,
-			'MINUS' => 23,
-			'AT' => 24,
-			'LPAR' => 27
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
 			'union_expr' => 1,
 			'relative_location_path' => 3,
+			'relational_expr' => 16,
 			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'or_expr' => 18,
 			'and_expr' => 9,
+			'unary_expr' => 21,
 			'equality_expr' => 10,
+			'expr' => 109,
+			'path_expr' => 25,
 			'additive_expr' => 12,
 			'location_path' => 13,
-			'step' => 15,
-			'relational_expr' => 16,
-			'function_call' => 17,
-			'multiplicative_expr' => 18,
-			'or_expr' => 19,
-			'unary_expr' => 22,
-			'path_expr' => 26,
-			'expr' => 110,
-			'absolute_location_path' => 29,
-			'axis' => 28
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
+	},
+	{#State 102
+		DEFAULT => -54
 	},
 	{#State 103
-		DEFAULT => -55
-	},
-	{#State 104
-		DEFAULT => -65
-	},
-	{#State 105
-		DEFAULT => -68
-	},
-	{#State 106
-		ACTIONS => {
-			'RPAR' => 111
-		}
-	},
-	{#State 107
 		DEFAULT => -64
 	},
-	{#State 108
-		DEFAULT => -66
+	{#State 104
+		DEFAULT => -67
 	},
-	{#State 109
+	{#State 105
+		ACTIONS => {
+			'RPAR' => 110
+		}
+	},
+	{#State 106
+		DEFAULT => -63
+	},
+	{#State 107
+		DEFAULT => -65
+	},
+	{#State 108
 		DEFAULT => -49
 	},
-	{#State 110
-		DEFAULT => -59
+	{#State 109
+		DEFAULT => -58
 	},
-	{#State 111
-		DEFAULT => -63
+	{#State 110
+		DEFAULT => -62
 	}
 ],
                                   yyrules  =>
@@ -1860,13 +1823,13 @@ sub new {
 	[#Rule 3
 		 'or_expr', 3,
 sub
-#line 111 "xfdxpath.yp"
-{ XFD::or [ @_[1,3] ] }
+#line 107 "xfdxpath.yp"
+{ XFD::Operator::or->new( @_[1,3] ) }
 	],
 	[#Rule 4
 		 'or_expr', 3,
 sub
-#line 112 "xfdxpath.yp"
+#line 108 "xfdxpath.yp"
 {
         die "XPath uses 'or' instead of Perl's '||'\n";
     }
@@ -1877,13 +1840,13 @@ sub
 	[#Rule 6
 		 'and_expr', 3,
 sub
-#line 119 "xfdxpath.yp"
-{ XFD::and [ @_[1,3] ] }
+#line 115 "xfdxpath.yp"
+{ XFD::Operator::and->new( @_[1,3] ) }
 	],
 	[#Rule 7
 		 'and_expr', 3,
 sub
-#line 120 "xfdxpath.yp"
+#line 116 "xfdxpath.yp"
 {
         die "XPath uses 'and' instead of Perl's '&&'\n";
     }
@@ -1891,7 +1854,7 @@ sub
 	[#Rule 8
 		 'and_expr', 3,
 sub
-#line 123 "xfdxpath.yp"
+#line 119 "xfdxpath.yp"
 {
         die "XPath uses 'and' instead of Perl's '&'\n";
     }
@@ -1902,19 +1865,19 @@ sub
 	[#Rule 10
 		 'equality_expr', 3,
 sub
-#line 130 "xfdxpath.yp"
-{ XFD::equals [ @_[1,3] ] }
+#line 126 "xfdxpath.yp"
+{ XFD::relational_op equals     => @_[1,3] }
 	],
 	[#Rule 11
 		 'equality_expr', 3,
 sub
-#line 131 "xfdxpath.yp"
-{ XFD::not_equals [ @_[1,3] ] }
+#line 127 "xfdxpath.yp"
+{ XFD::relational_op not_equals => @_[1,3] }
 	],
 	[#Rule 12
 		 'equality_expr', 3,
 sub
-#line 132 "xfdxpath.yp"
+#line 128 "xfdxpath.yp"
 { 
         die "XPath uses '=' instead of Perl's '=='\n";
     }
@@ -1925,26 +1888,26 @@ sub
 	[#Rule 14
 		 'relational_expr', 3,
 sub
-#line 139 "xfdxpath.yp"
-{ XFD::lt  [ @_[1,3] ] }
+#line 135 "xfdxpath.yp"
+{ XFD::relational_op lt  => @_[1,3] }
 	],
 	[#Rule 15
 		 'relational_expr', 3,
 sub
-#line 140 "xfdxpath.yp"
-{ XFD::gt  [ @_[1,3] ] }
+#line 136 "xfdxpath.yp"
+{ XFD::relational_op gt  => @_[1,3] }
 	],
 	[#Rule 16
 		 'relational_expr', 3,
 sub
-#line 141 "xfdxpath.yp"
-{ XFD::lte [ @_[1,3] ] }
+#line 137 "xfdxpath.yp"
+{ XFD::relational_op lte => @_[1,3] }
 	],
 	[#Rule 17
 		 'relational_expr', 3,
 sub
-#line 142 "xfdxpath.yp"
-{ XFD::gte [ @_[1,3] ] }
+#line 138 "xfdxpath.yp"
+{ XFD::relational_op gte => @_[1,3] }
 	],
 	[#Rule 18
 		 'additive_expr', 1, undef
@@ -1952,14 +1915,14 @@ sub
 	[#Rule 19
 		 'additive_expr', 3,
 sub
-#line 147 "xfdxpath.yp"
-{ XFD::addition    [ @_[1,3] ] }
+#line 143 "xfdxpath.yp"
+{ XFD::math_op addition    => @_[1,3] }
 	],
 	[#Rule 20
 		 'additive_expr', 3,
 sub
-#line 148 "xfdxpath.yp"
-{ XFD::subtraction [ @_[1,3] ] }
+#line 144 "xfdxpath.yp"
+{ XFD::math_op subtraction => @_[1,3] }
 	],
 	[#Rule 21
 		 'multiplicative_expr', 1, undef
@@ -1967,20 +1930,20 @@ sub
 	[#Rule 22
 		 'multiplicative_expr', 3,
 sub
-#line 153 "xfdxpath.yp"
-{ XFD::multiplication[ @_[1,3] ] }
+#line 149 "xfdxpath.yp"
+{ XFD::math_op multiplication => @_[1,3] }
 	],
 	[#Rule 23
 		 'multiplicative_expr', 3,
 sub
-#line 154 "xfdxpath.yp"
-{ XFD::division      [ @_[1,3] ] }
+#line 150 "xfdxpath.yp"
+{ XFD::math_op division       => @_[1,3] }
 	],
 	[#Rule 24
 		 'multiplicative_expr', 3,
 sub
-#line 155 "xfdxpath.yp"
-{ XFD::modulus       [ @_[1,3] ] }
+#line 151 "xfdxpath.yp"
+{ XFD::math_op modulus        => @_[1,3] }
 	],
 	[#Rule 25
 		 'unary_expr', 1, undef
@@ -1988,8 +1951,8 @@ sub
 	[#Rule 26
 		 'unary_expr', 2,
 sub
-#line 160 "xfdxpath.yp"
-{ XFD::negation $_[2] }
+#line 156 "xfdxpath.yp"
+{ XFD::Negation->new( $_[2] ) }
 	],
 	[#Rule 27
 		 'union_expr', 1, undef
@@ -1997,8 +1960,15 @@ sub
 	[#Rule 28
 		 'union_expr', 3,
 sub
-#line 165 "xfdxpath.yp"
+#line 161 "xfdxpath.yp"
 {
+        for ( $_[1], $_[3] ) {
+            next if $_->can( "set_next" );
+            $_ = ref $_;
+            s/^XFD:://;
+            die "Can't use a $_ in a union, perhaps you want || instead of |\n";
+        }
+
         my $union;
         if ( $_[1]->isa( "XFD::union" ) ) {
             $_[1]->add( $_[3] );
@@ -2016,25 +1986,41 @@ sub
 	[#Rule 30
 		 'path_expr', 3,
 sub
-#line 180 "xfdxpath.yp"
+#line 183 "xfdxpath.yp"
 {
-        if ( defined $_[2] ) {
-            die "This XPath implementation has no node sets, (expression)[predicate] is not supported\n";
-        }
-        if ( defined $_[3] ) {
-            die "This XPath implementation has no node sets, (expression)/path is not supported\n";
-        }
-        $_[1];
+        return $_[1] unless defined $_[2] || defined $_[3];
+
+        my $expr = $_[1];
+        $expr = $expr->[0] if $expr->isa( "XFD::Parens" );
+
+        ## TODO: Cope with nodesets passed in vars or
+        ## returned from functions.
+        die "node-set is required before a predicate or '/' (variables and functions returning nodesets are not (yet) supported)"
+            unless $expr->isa( "XFD::PathTest" );
+
+        $expr->set_next( $_[2] ) if defined $_[2];
+        $expr->set_next( $_[3] ) if defined $_[3];
+        $expr;
     }
 	],
 	[#Rule 31
 		 'segment', 0, undef
 	],
 	[#Rule 32
-		 'segment', 2, undef
+		 'segment', 2,
+sub
+#line 202 "xfdxpath.yp"
+{ $_[2] }
 	],
 	[#Rule 33
-		 'segment', 2, undef
+		 'segment', 2,
+sub
+#line 203 "xfdxpath.yp"
+{
+        my $op = XFD::Axis::descendant_or_self->new;
+        $op->set_next( $_[2] );
+        $op;
+    }
 	],
 	[#Rule 34
 		 'location_path', 1, undef
@@ -2045,15 +2031,15 @@ sub
 	[#Rule 36
 		 'absolute_location_path', 1,
 sub
-#line 203 "xfdxpath.yp"
+#line 215 "xfdxpath.yp"
 { XFD::doc_node->new }
 	],
 	[#Rule 37
 		 'absolute_location_path', 2,
 sub
-#line 204 "xfdxpath.yp"
+#line 216 "xfdxpath.yp"
 {
-        my $op = XFD::doc_node->new( @_[0..1] );
+        my $op = XFD::doc_node->new;
         $op->set_next( $_[2] );
         $op;
     }
@@ -2061,14 +2047,13 @@ sub
 	[#Rule 38
 		 'absolute_location_path', 2,
 sub
-#line 209 "xfdxpath.yp"
+#line 221 "xfdxpath.yp"
 { 
         ## /descendant-or-self::node()/relative_location_path
-        my $op = XFD::doc_node->new( @_[0..1] );
+        my $op = XFD::doc_node->new;
         my $step = _step(
-            $_[0],
             XFD::Axis::descendant_or_self->new,
-            XFD::NodeType::node->new,
+            XFD::EventType::node->new,
         );
         $op->set_next( $step );
         $step->set_next( $_[2] );
@@ -2081,18 +2066,17 @@ sub
 	[#Rule 40
 		 'relative_location_path', 3,
 sub
-#line 224 "xfdxpath.yp"
+#line 235 "xfdxpath.yp"
 { $_[1]->set_next( $_[3] ) ; $_[1] }
 	],
 	[#Rule 41
 		 'relative_location_path', 3,
 sub
-#line 227 "xfdxpath.yp"
+#line 238 "xfdxpath.yp"
 {
         my $step = _step(
-            $_[0],
             XFD::Axis::descendant_or_self->new,
-            XFD::NodeType::node->new,
+            XFD::EventType::node->new,
         );
         $_[1]->set_next( $step );
         $step->set_next( $_[3] );
@@ -2102,37 +2086,37 @@ sub
 	[#Rule 42
 		 'step', 3,
 sub
-#line 240 "xfdxpath.yp"
-{ _step( @_ ) }
+#line 250 "xfdxpath.yp"
+{ _step( @_[1..$#_] ) }
 	],
 	[#Rule 43
 		 'step', 1,
 sub
-#line 241 "xfdxpath.yp"
+#line 251 "xfdxpath.yp"
 { XFD::self_node->new }
 	],
 	[#Rule 44
 		 'step', 1,
 sub
-#line 242 "xfdxpath.yp"
+#line 252 "xfdxpath.yp"
 { _no @_; }
 	],
 	[#Rule 45
 		 'axis', 0,
 sub
-#line 246 "xfdxpath.yp"
+#line 256 "xfdxpath.yp"
 { XFD::Axis::child->new     }
 	],
 	[#Rule 46
 		 'axis', 2,
 sub
-#line 247 "xfdxpath.yp"
+#line 257 "xfdxpath.yp"
 { XFD::axis( $_[1] )        }
 	],
 	[#Rule 47
 		 'axis', 1,
 sub
-#line 248 "xfdxpath.yp"
+#line 258 "xfdxpath.yp"
 { XFD::Axis::attribute->new }
 	],
 	[#Rule 48
@@ -2141,7 +2125,7 @@ sub
 	[#Rule 49
 		 'predicates', 4,
 sub
-#line 253 "xfdxpath.yp"
+#line 263 "xfdxpath.yp"
 {
         my $p = XFD::predicate->new( $_[3] );
         if ( defined $_[1] ) {
@@ -2154,14 +2138,14 @@ sub
 	[#Rule 50
 		 'primary_expr', 1,
 sub
-#line 264 "xfdxpath.yp"
-{ XFD::get_var $_[1] }
+#line 274 "xfdxpath.yp"
+{ XFD::VariableReference->new( $_[1] ) }
 	],
 	[#Rule 51
 		 'primary_expr', 3,
 sub
-#line 265 "xfdxpath.yp"
-{ XFD::parens $_[2] }
+#line 275 "xfdxpath.yp"
+{ XFD::Parens->new( $_[2] ) }
 	],
 	[#Rule 52
 		 'primary_expr', 1, undef
@@ -2170,90 +2154,85 @@ sub
 		 'primary_expr', 1, undef
 	],
 	[#Rule 54
-		 'primary_expr', 1, undef
-	],
-	[#Rule 55
-		 'function_call', 4,
+		 'primary_expr', 4,
 sub
-#line 272 "xfdxpath.yp"
+#line 278 "xfdxpath.yp"
 { XFD::function( @_[1,3] ) }
 	],
-	[#Rule 56
+	[#Rule 55
 		 'opt_args', 0,
 sub
-#line 276 "xfdxpath.yp"
+#line 282 "xfdxpath.yp"
 { [] }
 	],
-	[#Rule 57
+	[#Rule 56
 		 'opt_args', 1, undef
 	],
-	[#Rule 58
+	[#Rule 57
 		 'args', 1,
 sub
-#line 281 "xfdxpath.yp"
-{
-        [ $_[1] ];
-    }
+#line 287 "xfdxpath.yp"
+{ [ $_[1] ] }
 	],
-	[#Rule 59
+	[#Rule 58
 		 'args', 3,
 sub
-#line 284 "xfdxpath.yp"
+#line 288 "xfdxpath.yp"
 {
         push @{$_[1]}, $_[3];
         $_[1];
     }
 	],
+	[#Rule 59
+		 'node_test', 1,
+sub
+#line 295 "xfdxpath.yp"
+{ XFD::node_name->new( $_[1] ) }
+	],
 	[#Rule 60
 		 'node_test', 1,
 sub
-#line 291 "xfdxpath.yp"
-{ XFD::node_name->new( $_[1] ) }
+#line 296 "xfdxpath.yp"
+{ XFD::EventType::principal_event_type->new; }
 	],
 	[#Rule 61
 		 'node_test', 1,
 sub
-#line 292 "xfdxpath.yp"
-{ XFD::any_node_name->new; }
+#line 297 "xfdxpath.yp"
+{ XFD::namespace_test->new( $_[1] ) }
 	],
 	[#Rule 62
-		 'node_test', 1,
-sub
-#line 293 "xfdxpath.yp"
-{ _no @_; }
-	],
-	[#Rule 63
 		 'node_test', 4,
 sub
-#line 294 "xfdxpath.yp"
-{ XFD::NodeType::processing_instruction
-                                                           ->new( $_[0] ) }
+#line 298 "xfdxpath.yp"
+{ XFD::EventType::processing_instruction
+                                                           ->new( $_[2] ) }
+	],
+	[#Rule 63
+		 'node_test', 3,
+sub
+#line 300 "xfdxpath.yp"
+{ XFD::EventType::comment      ->new }
 	],
 	[#Rule 64
 		 'node_test', 3,
 sub
-#line 296 "xfdxpath.yp"
-{ XFD::NodeType::comment->new( $_[0] ) }
+#line 301 "xfdxpath.yp"
+{ XFD::EventType::text         ->new }
 	],
 	[#Rule 65
 		 'node_test', 3,
 sub
-#line 297 "xfdxpath.yp"
-{ XFD::NodeType::text   ->new( $_[0] ) }
+#line 302 "xfdxpath.yp"
+{ XFD::EventType::node         ->new }
 	],
 	[#Rule 66
-		 'node_test', 3,
-sub
-#line 298 "xfdxpath.yp"
-{ XFD::NodeType::node   ->new( $_[0] ) }
-	],
-	[#Rule 67
 		 'opt_literal', 0, undef
 	],
-	[#Rule 68
+	[#Rule 67
 		 'opt_literal', 1,
 sub
-#line 303 "xfdxpath.yp"
+#line 307 "xfdxpath.yp"
 { _no @_; }
 	]
 ],
@@ -2261,7 +2240,7 @@ sub
     bless($self,$class);
 }
 
-#line 306 "xfdxpath.yp"
+#line 310 "xfdxpath.yp"
 
 
 =head1
@@ -2350,18 +2329,18 @@ my $simple_tokens =
 
 my $NCName = "(?:[a-zA-Z_][a-zA-Z0-9_.-]*)"; ## TODO: comb. chars & Extenders
 
-my %NodeType = qw(
+my %EventType = qw(
     node                   NODE
     text                   TEXT
     comment                COMMENT
     processing-instruction PI
 );
 
-my $NodeType = "(?:" .
-    join( "|", map quotemeta, sort {length $a <=> length $b} keys %NodeType ) .
+my $EventType = "(?:" .
+    join( "|", map quotemeta, sort {length $a <=> length $b} keys %EventType ) .
     ")";
 
-my $AxisName = "(?:" .  join( "|", split /\n/, <<AXIS_LIST_END ) . ")" ;
+my $AxisName = "(?:" .  join( "|", split /\n+/, <<AXIS_LIST_END ) . ")" ;
 ancestor
 ancestor-or-self
 attribute
@@ -2375,6 +2354,7 @@ parent
 preceding
 preceding-sibling
 self
+end
 AXIS_LIST_END
 
 my %preceding_tokens = map { ( $_ => undef ) } ( qw(
@@ -2388,7 +2368,9 @@ my %preceding_tokens = map { ( $_ => undef ) } ( qw(
     "(", ","
 ) ;
 
+
 sub debugging () { 0 }
+
 
 sub lex {
     my ( $p ) = @_;
@@ -2419,7 +2401,7 @@ sub lex {
         }
         ## an NCName must be recognized as an OperatorName.
         elsif ( $$input =~ /\G\s*($NCName)/gc ) {
-            die "Expected and, or, mod or div, got '$1'"
+            die "Expected and, or, mod or div, got '$1'\n"
                 unless 0 <= index "and|or|mod|div", $1;
             ( $token, $val ) = ( uc $1, $1 );
         }
@@ -2430,16 +2412,15 @@ sub lex {
         $$input =~ m{\G\s*(?:
             ## If the character following an NCName (possibly after
             ## intervening ExprWhitespace) is (, then the token must be
-            ## recognized as a NodeType or a FunctionName.
-
+            ## recognized as a EventType or a FunctionName.
             ($NCName)\s*(?=\()
 
             ## If the two characters following an NCName (possibly after
             ## intervening ExprWhitespace) are ::, then the token must be
             ## recognized as an AxisName
-
             |($NCName)\s*(?=::)
 
+            ## Otherwise, it's just a normal lexer.
             |($NCName:\*)                           #NAME_COLON_STAR
             |((?:$NCName:)?$NCName)                 #QNAME
             |('[^']*'|"[^"]*")                      #LITERAL
@@ -2450,45 +2431,28 @@ sub lex {
 
         ( $token, $val ) =
             defined $1  ? (
-                exists $NodeType{$1}
-                    ? ( $NodeType{$1}, $1 )
+                exists $EventType{$1}
+                    ? ( $EventType{$1}, $1 )
                     : ( FUNCTION_NAME => $1 )
             ) :
         
-            defined $2  ? (
-                0 <= index( $AxisName, $2 )
-                    ? ( AXIS_NAME => $2 )
-                    : die "Expected an Axis Name, got '$2' at ",
-                        pos $p->{USER}->{Input},
-                        "\n"
-            ) :
-            defined  $3 ? ( NAME_COLON_STAR  =>  $3 ) :
-            defined  $4 ? ( QNAME            =>  $4 ) :
-            defined  $5 ? ( LITERAL          =>  do {
+            defined $2 ? ( AXIS_NAME        =>  $2 ) :
+            defined $3 ? ( NAME_COLON_STAR  =>  $3 ) :
+            defined $4 ? ( QNAME            =>  $4 ) :
+            defined $5 ? ( LITERAL          =>  do {
                     my $s = substr( $5, 1, -1 );
                     $s =~ s/([\\'])/\\$1/g;
-                    bless \"'$s'", "string constant";
+                    XFD::StringConstant->new( $s );
                 }
             ) :
-            defined  $6 ? ( NUMBER           =>  bless \"$6", "number constant" ) :
-            defined  $7 ? ( DOLLAR_QNAME     =>  $7 ) :
-            defined  $8 ? ( $tokens{$8}      =>  $8 ) :
+            defined $6 ? ( NUMBER           =>
+                XFD::NumericConstant->new( "$6")
+            ) :
+            defined $7 ? ( DOLLAR_QNAME     =>  $7 ) :
+            defined $8 ? ( $tokens{$8}      =>  $8 ) :
             die "Failed to parse '$$input' at ",
                 pos $$input,
                 "\n";
-
-        ## the parser needs to know whether an path expression is being
-        ## parsed in a predicate or not so it can deal with paths
-        ## using immediate code in predicates instead of converting them
-        ## to incremental code run as precursors.
-        if ( $p->{USER}->{ExitedPredicate} ) {
-            --$XFD::predicate_depth;
-        }
-        $p->{USER}->{ExitedPredicate} = $token eq "RSQB";
-
-        if ( $token eq "LSQB" ) {
-            ++$XFD::predicate_depth;
-        }
     }
 
     $d->{LastToken} = $val;
@@ -2513,9 +2477,15 @@ sub error {
     print "Couldn't parse '$p->{USER}->{Input}' at position ", pos $p->{USER}->{Input}, "\n";
 }
 
-sub parse {
+## _parse is an internal, reentrant entry point; it's used to parse rules
+## and subrules.
+sub _parse {
     my $self = shift;
-    my ( $xpath, $action_code, $options ) = @_;
+    my ( $expr, $action_code ) = @_;
+
+    my $options = $XFD::dispatcher;
+
+    warn "Parsing '$expr'\n" if $options->{Debug};
 
     my $p = XML::Filter::Dispatcher::Parser->new(
         yylex   => \&lex,
@@ -2525,61 +2495,61 @@ sub parse {
             : (),
     );
 
-    local $XFD::has_start_or_end =
-        defined $options->{RunAtStartAndEnd}
-            ? $options->{RunAtStartAndEnd}
-            : 0;
-
-    local $XFD::fold_constants =
-        defined $options->{FoldConstants}
-            ? $options->{FoldConstants}
-            : 1;
-
-    local $XFD::self_curriers = 0;
-    local $XFD::rule_number   = $options->{RuleNumber};
-    local $XFD::predicate_depth = 0;
-
     %{$p->{USER}} = %$options if $options;
-    $p->{USER}->{ExitedPredicate} = 0;
-    $p->{USER}->{Input} = $xpath;
-    my $r = $p->YYParse;
+    $p->{USER}->{Input} = $expr;
+    local $XFD::dispatcher->{ParseNestingDepth}
+        = $XFD::dispatcher->{ParseNestingDepth} + 1;
 
-    if ( $p->{USER}->{ExitedPredicate} ) {
-        --$XFD::predicate_depth;
-        $p->{USER}->{ExitedPredicate} = 0;
-    }
+    my $op_tree = eval {
+        $p->YYParse;                ## <== the actual parse
+    };
+
+    die $@ if $@;
 
     die map "$_\n", @{$p->{USER}->{NONONO}}
         if $p->{USER}->{NONONO} ;
 
-    return undef unless defined $r;
+    return undef unless defined $op_tree;
 
-    die "grammar returned '$r', needed a ref\n"
-        unless ref $r;
+    die "grammar returned '$op_tree', needed a ref\n"
+        unless ref $op_tree;
 
-    die "predicate_depth not zero: $XFD::predicate_depth"
-        if $XFD::predicate_depth;
+    ## TODO: figure a way to allow a limited subset
+    ## of EventPath patterns, kinda like allowing
+    ## a pattern match against the generated Op tree,
+    ## or alternate grammar files.  The former could
+    ## give more helpful error messages, the latter
+    ## could be more flexible because it would allow
+    ## non-standard grammars.
+    $op_tree = XFD::ExprEval->new( $op_tree )
+        unless $op_tree->isa( "XFD::PathTest" );
 
-    package XFD;
-    if ( $r->isa( "XFD::PathTest" ) ) {
-        ## It's a relative location path, so 
-        ## convert it to code as-is.
-        $r = _rel2abs( $r )->as_incr_code( action \$action_code );
+    $op_tree->set_next( XFD::action( $action_code ) );
+
+    return $op_tree;
+}
+
+
+sub parse {
+    my $self = shift;
+    local $XFD::dispatcher = shift;
+    my ( $expr, $context ) = @_;
+
+    $XFD::dispatcher->{ParseNestingDepth} = 0;
+    $XFD::dispatcher->{OpTree} ||= XFD::union->new;
+
+    my $op_tree = $self->_parse( @_ );
+
+    if ( ( $XFD::dispatcher->{Debug} || 0 ) > 1 ) {
+        open F, ">foo.png";
+        print F $op_tree->as_graphviz->as_png;
+        close F;
+        system( "ee foo.png" );
     }
-    else {
-        ## It's not a location path opcode, it's an expression,
-        ## so make it get evaluated for every node 
-        $r = ${ expr_eval $r, action \$action_code };
-        $r = ${ all_nodes_or_self \$r }
-            unless @XFD::precursors;
-    }
 
-    return () unless defined $r && length $r;
-
-    ## Ok, looks like we have an expression that might be true sometimes,
-    ## assemble it and any precursors in to a list of test subs.
-    return XFD::expression_as_incr_code $r;
-
+    my $rule = XFD::Rule->new( $expr );
+    $rule->set_next( $op_tree );
+    $XFD::dispatcher->{OpTree}->add( $rule );
 }
 
 1 ;

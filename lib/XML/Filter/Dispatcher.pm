@@ -9,6 +9,7 @@ XML::Filter::Dispatcher - Path based event dispatching with DOM support
     use XML::Filter::Dispatcher qw( :all );
 
     my $f = XML::Filter::Dispatcher->new(
+
         Rules => [
            'foo'            => \&handle_foo_start_tag,
            '@bar'           => \&handle_bar_attr_at_start_tag,
@@ -17,11 +18,13 @@ XML::Filter::Dispatcher - Path based event dispatching with DOM support
            'foo'            => $handler,
 
            ## Print the text of all <description> elements
-           'string( description )' => sub { print xresult },
+           'string( description )' => sub { print xvalue },
        ],
+
        Vars => [
            "id" => [ string => "12a" ],
        ],
+
     );
 
 =head1 DESCRIPTION
@@ -45,11 +48,71 @@ event method is called.
 =head2 Rules
 
 A rule is composed of a pattern and an action.  Each
-XML::Filter::Dispatcher instance has a list of rules; all rules with
-patterns that match a particular SAX event fire their actions when that
-SAX event is received.
+XML::Filter::Dispatcher instance has a list of rules.  As SAX events are
+received, the rules are evaluated and one rule's action is executed.  If
+more than one rule matches an event, the rule with the highest score
+wins; by default a rule's score is it's position in the rule list, so
+the last matching rule the list will be acted on.
 
-=head2 Patterns
+A simple rule list looks like:
+
+    Rules => [
+        'a' => \&handle_a,
+        'b' => \&handle_b,
+    ],
+
+=head3 Actions
+
+There are several types of actions:
+
+=over
+
+=item o
+
+CODE reference
+
+    Rules => [
+        'a' => \&foo,
+        'b' => sub { print "got a <b>!\n" },
+    ],
+
+=item o
+
+SAX handler
+
+    Handler => $h,  ## A downstream handler
+    Rules => [
+        'a' => "Handler",
+        'b' => $h2,    ## Another handler
+    ],
+
+=item o
+
+undef
+
+    Rules => [
+        '//node()' => $h,
+        'b' => undef,
+    ],
+
+Useful for preventing other actions for some events
+
+=item o
+
+Perl code
+
+    Rules => [
+        'b' => \q{print "got a <b>!\n"},
+    ],
+
+Lower overhead than a CODE reference.
+
+B<EXPERIMENTAL>.
+
+=back
+
+
+=head2 EventPath Patterns
 
 Note: this section describes EventPath and discusses differences between
 EventPath and XPath.  If you are not familiar with XPath you may want
@@ -76,9 +139,9 @@ semantics (XPath truth-ness differs from Perl truth-ness, see
 L<EventPath Truth|EventPath Truth> below).  Expression patterns look
 like C<string( /a/b/c )> or C<number( part-number )>, and if the result
 is true, the action will be executed and the result can be retrieved
-using the L<xresult|xresult> method.
+using the L<xvalue|xvalue> method.
 
-TODO: rename xresult to be ep_result or something.
+TODO: rename xvalue to be ep_result or something.
 
 We cover patterns in more detail below, starting with some examples.
 
@@ -167,7 +230,9 @@ just the names of hairstyles, we could do something like:
     run(
         XML::Filter::Dispatcher->new(
             Rules => [
-                'string( @hairstyle )' => sub { $styles{xresult()} = 1 },
+                'stooge' => [
+                    'string( @hairstyle )' => sub { $styles{xvalue()} = 1 },
+                ],
             ],
         )
     );
@@ -175,12 +240,12 @@ just the names of hairstyles, we could do something like:
     print join( ", ", sort keys %styles ), "\n";
 
 which prints "bald, bowl cut, bushy, mop".  That rule extracts the text
-of each C<hairstyle> attribute and the C<xresult()> returns it.
+of each C<hairstyle> attribute and the C<xvalue()> returns it.
 
 The text contents of elements like C<E<lt>attitudesE<gt>> can also be
 sussed out by using a rule like:
 
-                'string( attitude )' => sub { $styles{xresult()} = 1 },
+                'string( attitude )' => sub { $styles{xvalue()} = 1 },
 
 which prints "Bully, Fool, Klutz, Middleman".
 
@@ -192,9 +257,11 @@ a rule like:
     run(
         XML::Filter::Dispatcher->new(
             Rules => [
-                'concat(@hairstyle,"=>",attitude)' => sub {
-                    $styles{$1} = $2 if xresult() =~ /(.+)=>(.+)/;
-                },
+                'stooge' => [
+                    'concat(@hairstyle,"=>",attitude)' => sub {
+                        $styles{$1} = $2 if xvalue() =~ /(.+)=>(.+)/;
+                    },
+                ],
             ],
         )
     );
@@ -214,13 +281,175 @@ which prints:
 
 =over
 
-=item * Examples of dispatching to other SAX handlers
-
 =item * Examples for accumulating data
 
 =item * Advanced pattern matching examples
 
 =cut
+
+=head2 Sending Trees and Events to Other SAX Handlers
+
+When a blessed object C<$handler> is provided as an action for a rule:
+
+    my $foo = XML::Handler::Foo->new();
+    my $d = XML::Filter::Dispatcher->new(
+        Rules => [
+           'foo' => $handler,
+        ],
+        Handler => $h,
+    );
+
+the selected SAX events are sent to C<$handler>.
+
+=head3 Element Forwarding
+
+If the event is selected is a C<start_document()> or C<start_element()>
+event and it is selected without using the C<start-document::> or
+C<start-element::> axes, then the handler (C<$foo>) replaces the
+existing handler of the dispatcher (C<$h>) until after the corresponding
+C<end_...()> event is received.
+
+This causes the entire element (C<E<lt>fooE<gt>>) to be sent to the
+temporary handler (C<$foo>).  In the example, each C<E<lt>fooE<gt>>
+element will be sent to C<$foo> as a separate document, so if
+(whitespace shown as underscores)
+
+    <root>
+    ____<foo>....</foo>
+    ____<foo>....</foo>
+    ____<foo>....</foo>
+    </root>
+
+is fed in to C<$d>, then C<$foo> will receive 3 separate
+
+    <foo>...</foo>
+
+documents (C<start_document()> and C<end_document()> events are emitted
+as necessary) and C<$h> will receive a single document without any
+C<E<lt>fooE<gt>> elements:
+
+    <root>
+    ____
+    ____
+    ____
+    </root>
+
+This can be useful for parsing large XML files in small chunks, often in
+conjunction with L<XML::Simple|XML::Simple> or
+L<XML::Filter::XSLT|XML::Filter::XSLT>.
+
+But what if you don't want C<$foo> to see three separate documents?
+What if you're excerpting chunks of a document to create another
+document?  This can be done by telling the dispatcher to emit the main
+document to C<$foo> and using rules with an action of C<undef> to elide
+the events that are not wanted.  This setup:
+
+    my $foo = XML::Handler::Foo->new();
+    my $d = XML::Filter::Dispatcher->new(
+        Rules => [
+           '/'   => $foo,
+           'bar' => undef,
+           'foo' => $foo,
+        ],
+        Handler => $h,
+    );
+
+, when fed this document:
+
+    <root>
+    __<bar>hork</bar>
+    __<bar>
+    __<foo>....</foo>
+    __<foo>....</foo>
+    __<foo>....</foo>
+    __<hmph/>
+    __</bar>
+    __<hey/>
+    </root>
+
+results in C<$foo> receiving a single document of input looking like
+this:
+
+    <root>
+    __
+    __<foo>....</foo>
+    __<foo>....</foo>
+    __<foo>....</foo>
+    __<hey/>
+    </root>
+
+XML::Filter::Dispatcher keeps track of each handler and sends
+C<start_document()> and C<end_document()> at the appropriate times, so
+the C<E<lt>fooE<gt>> elements are "hoisted" out of the C<E<lt>barE<gt>>
+element in this example without any untoward C<..._document()> events.
+
+B<TODO>: support forwarding to multiple documents at a time.  At the
+present, using multiple handlers for the same event is not supported.
+
+=head3 Discrete Event Forwarding
+
+B<TODO>: At the moment, selecting and forwarding individual events is
+not supported.  When it is, any events other than those covered above
+will be forwarded individually
+
+=head2 Tracing
+
+XML::Filter::Dispatcher checks when it is first loaded to see if
+L<Devel::TraceSAX|Devel::TraceSAX> is loaded.  If so, it will emit tracing
+messages.  Typical use looks like
+
+    perl -d:Devel::TraceSAX script_using_x_f_dispatcher
+
+If you are C<use()>ing Devel::TraceSAX in source code, make sure that it is
+loaded before XML::Filter::Dispatcher.
+
+TODO: Allow tracing to be enabled/disabled independantly of Devel::TraceSAX.
+
+=head2 Namespace Support
+
+XML::Filter::Dispatcher offers namespace support in matching and by
+providing functions like local-name().  If the documents you are
+processing don't use namespaces, or you only care about elements and
+attributes in the default namespace (ie without a "foo:" namespace
+prefix), then you need not worry about engaging
+XML::Filter::Dispatcher's namespace support.  You do need it if your
+patterns contain the C<foo:*> construct (that C<*> is literal).
+
+To specify the namespaces, pass in an option like
+
+    Namespaces => {
+       ""      => "uri0",   ## Default namespace
+       prefix1 => "uri1",
+       prefix2 => "uri2",
+    },
+
+Then use C<prefix1:> and C<prefix2:> whereever necessary in patterns.
+
+If your patterns contain prefixes (like the C<foo:> in C<foo:bar>), and
+you don't provide a Namespaces option, then the element names will
+silently be matched literally as "foo:bar", whether or not the source
+document declares namespaces.  B<This may change, as it may cause too
+much user confusion>.
+
+XML::Filter::Dispatcher follows the XPath specification rather literally
+and does not allow C<:*>, which you might think would match all nodes in
+the default namespace.  To do this, ass a prefixe for the default
+namespace URI:
+
+    Namespaces => {
+       ""        => "uri0",   ## Default namespace
+       "default" => "uri0",   ## Default namespace
+       prefix1   => "uri1",
+       prefix2   => "uri2",
+    },
+
+then use "default:*" to match it.
+
+B<CURRENT LIMITAION>: Currently, all rules must exist in the same namespace
+context.  This will be changed when I need to change it (contact me
+if you need it changed).  The current idear is to allow a special
+function "Namespaces( { .... }, @rules )" that enables a temporary
+namespace context, although abbreviated forms might be possible.
 
 =head2 EventPath Dialect
 
@@ -235,18 +464,16 @@ literal representation in memory.  For instance, an element
 C<E<lt>fooE<gt>> is represented by a single node which contains other
 nodes.
 
-EventPath operates on a series of events and both documents and
-elements, which are each represented by single nodes in DOM trees, are
-both represented by two event method calls, C<start_...()> and
-C<end_...()>.  This means that EventPath patterns may match in a
+EventPath operates on a series of events instead of a tree of nodes.
+For instance elements, which are represented by nodes in DOM trees, are
+represented by two event method calls, C<start_element()> and
+C<end_element()>.  This means that EventPath patterns may match in a
 C<start_...()> method or an C<end_...()> method, or even both if you try
-hard enough.  Not all patterns have this dual nature; comment matches
-occur only in C<comment()> event methods for instance.
+hard enough.
 
-EventPath patterns match as early in the document as
-possible.  The only times an EventPath pattern will match in an
+The only times an EventPath pattern will match in an
 C<end_...()> method are when the pattern refers to an element's contents
-or it uses the C<is-end-event()> function (described below) to do so
+or it uses the XXXX function (described below) to do so
 intentionally.
 
 The tree metaphor is used to arrange and describe the
@@ -322,46 +549,112 @@ C<start_...> and C<end_...> events.  By default
  Expression          Event Type      Description (event type)
  ==========          ==========      ========================
  /                   start_document  Selects the document node
- /[is-end-event()]   end_element        "     "     "      "
 
  /a                  start_element   Root elt, if it's "<a ...>"
- /a[is-end-event()]  end_element       "   "   "  "       "
 
  a                   start_element   All "a" elements
- a[is-end-event()]   end_element      "   "     "
 
  b//c                start_element   All "c" descendants of "b" elt.s
 
  @id                 start_element   All "id" attributes
 
- string( foo )       end_element     fires at each </foo> or <foo/>;
-                                     xresult() returns the
+ string( foo )       end_element     matches at the first </foo> or <foo/>
+                                     in the current element;
+                                     xvalue() returns the
                                      text contained in "<foo>...</foo>"
 
- string( @name )     start_element   All "name" attributes;
-                                     xresult() returns the
+ string( @name )     start_element   the first "name" attributes;
+                                     xvalue() returns the
                                      text of the attribute.
 
-=head2 Methods
+=head2 Methods and Functions
 
-=over
+There are several APIs provided: general, xstack, and EventPath
+variable handling.
+
+The general API provides C<new()> and C<xvalue()>.
+The variables API provides C<xset_var()> and C<xget_var()>.  The
+xstack API provides C<xpush()>, C<xpeek()> and C<xpop()>.
+
+All of the "xfoo()" APIs may be called as a method or,
+within rule handlers, called as a function:
+
+    $d = XML::Filter::Dispatcher->new(
+        Rules => [
+            "/" => sub {
+                xpush "foo\n";
+                print xpeek;        ## Prints "foo\n"
+
+                my $self = shift;
+                print $self->xpeek; ## Also prints "foo\n"
+            },
+        ],
+    );
+
+    print $d->xpeek;                ## Yup, prints "foo\n" as well.
+
+This dual nature allows you to import the APIs as functions and call them
+using a concise function-call style, or to leave them as methods and
+use object-oriented style.
+
+Each call may be imported by name:
+
+   use XML::Filter::Dispatcher qw( xpush xpeek );
+
+or by one of three API category tags:
+
+   use XML::Filter::Dispatcher ":general";    ## xvalue()
+   use XML::Filter::Dispatcher ":variables";  ## xset_var(), xget_var()
+   use XML::Filter::Dispatcher ":xtack";      ## xpush(), xpop(), and xpeek()
+
+or en mass:
+
+   use XML::Filter::Dispatcher ":all";
 
 =cut
 
-$VERSION = 0.31;
-@ISA = qw( XML::SAX::Base Exporter );
+$VERSION = 0.4;
+@ISA = qw( Exporter );
 
-@EXPORT_OK = qw( xresult xset_var xget_var );
-%EXPORT_TAGS = ( all => \@EXPORT_OK );
+BEGIN {
+    my @general_API   = qw( xvalue );
+    my @xstack_API = qw( xpeek xpop xpush xstack_empty );
+    my @variables_API = qw( xset_var xget_var );
+    @EXPORT_OK = ( @general_API, @variables_API, @xstack_API );
+    %EXPORT_TAGS = (
+        all       => \@EXPORT_OK,
+        general   => \@general_API,
+        xstack    => \@xstack_API,
+        autostack => \@xstack_API,  # deprecated
+        variables => \@variables_API,
+    );
+}
 
 
 use strict ;
-use vars qw( $cur_self ); ## For calling some methods as subs from actions.
 
 use Carp ;
 use Exporter;
-use XML::SAX::Base;
+#use XML::SAX::Base;
 use XML::Filter::Dispatcher::Parser;
+#use XML::NamespaceSupport;
+use XML::SAX::EventMethodMaker qw( compile_missing_methods sax_event_names );
+
+use constant is_tracing => defined $Devel::TraceSAX::VERSION;
+
+BEGIN {
+    eval( is_tracing
+        ? 'use Devel::TraceSAX qw( emit_trace_SAX_message ); 1'
+        : 'sub emit_trace_SAX_message; 1'
+    ) or die $@;
+}
+
+
+## TODO: Prefix all of the hash keys in $self with XFD_ to avoid
+## conflict with X::S::B and subclasses / hander CODE.
+
+## TODO: xvalue = $ctx when the expr is a location path
+## TODO: local $_ = xvalue before calling in to a sub
 
 ##
 ## $ctx->{Vars}  a HASH of variables passed in from the parent context
@@ -373,6 +666,10 @@ use XML::Filter::Dispatcher::Parser;
 ##                   node's siblings can see it.
 ##
 
+=head1 General API
+
+=over
+
 =item new
 
     my $f = XML::Filter::Dispatcher->new(
@@ -383,127 +680,154 @@ use XML::Filter::Dispatcher::Parser;
         ],
     );
 
+Must be called as a method, unlike other API calls provided.
+
 =cut
 
 sub new {
     my $proto = shift ;
-    my $self = $proto->SUPER::new( @_ ) ;
+    my %handlers;
+    my $self = bless {
+        FoldContstants => 1,
+        Handlers => {
+            Handler => undef,  ## Setting this here always allows "Handler"
+                               ## in actions, so that a call to
+                               ## set_handler( $h ) can be used when the
+                               ## handler is not set when new() is called.
+        },
+    }, ref $proto || $proto;
+
+    while ( @_ ) {
+        my ( $key, $value ) = ( shift, shift );
+
+        if ( substr( $key, -7 ) eq "Handler" ) {
+            $self->{Handlers}->{$key} = $value;
+        }
+        elsif ( $key eq "Handlers" ) {
+            $self->{Handlers}->{$_} = $value->{$_}
+                for keys %$value;
+        }
+        else {
+            $self->{$key} = $value;
+        }
+
+    }
 
     $self->{Rules} = [ %{$self->{Rules}} ]
         if ref $self->{Rules} eq "HASH";
-    
-    my $ctx = $self->{CtxStack}->[0] = $self->{DocCtx} = {};
+
     $self->{RuleTexts} = [];
     $self->{CompiledRules} = [];
 
-    my $rule_number = 0;
+    my $doc_ctx = $self->{DocCtx} = $self->{CtxStack}->[0] = {};
+    $doc_ctx->{ChildCtx} = {};
+    
+    for ( keys %{$self->{Vars}} ) {
+        $self->xset_var( $_, @{$self->{Vars}->{$_}} );
+    }
+
+    ## XFD::dispatcher is only needed for the parse phase.
+    local $XFD::dispatcher = $self;
+
     while ( @{$self->{Rules}} ) {
         my ( $expr, $action ) = (
             shift @{$self->{Rules}},
             shift @{$self->{Rules}}
         );
 
-        my $action_type = ref $action;
-        push @{$self->{Actions}}, $action;
-        my $action_num = $#{$self->{Actions}};
-        my $action_code;
-
-        my %options = (
-            %$self,
-            RuleNumber => $rule_number++,
-        );
-        
-        if ( $action_type && $action_type ne "CODE" ) {
-            ## Must be a SAX handler, make up some action code to
-            ## install it and arrange for it's removal.
-#            $options{RunAtStartAndEnd} = 1;
-            $action_code = <<CODE_END;
-{
-    my ( \$d, \$ctx ) = \@_;
-    warn "replacing \\\$ctx->{TempHandler}\n" if \$ctx->{TempHandler};
-    \$ctx->{TempHandler} = \$d->{Handler};
-    \$d->set_handler( \$d->{Actions}[$action_num] );
-    if ( \$ctx->{IsStartEvent} && \$ctx->{EventType} ne "start_document" ) {
-        \$d->XML::SAX::Base::start_document(
-            \@{\$d->{CtxStack}->[0]->{SAXArgs}}
-        );
+        eval {
+            XML::Filter::Dispatcher::Parser->parse(
+                $self,
+                $expr,
+                $action,
+            );
+            1;
+        }
+        or do {
+            $@ ||= "parse returned undef";
+            chomp $@;
+            die "$@ in EventPath expression '$expr'\n";
+        }
     }
-}
-CODE_END
-        }
-        else {
-            ## It's a code ref, arrange for it to be called
-            ## directly.
-            $action_code = <<A;
-\$d->{Actions}[$action_num]->( \$d, \$ctx->{Node} );
-A
-        }
 
-        my $code = XML::Filter::Dispatcher::Parser->parse(
-            $expr,
-            $action_code,
-            \%options,
-        );
+    return $self unless @{$self->{OpTree}};
 
-        die "Couldn't compile XPath expression '$expr'\n"
-            unless defined $code;
+    $self->{OpTree}->fixup( {} );
+    my $code = $self->{OpTree}->as_incr_code( {
+        FoldConstants => $self->{FoldConstants},
+    } );
 
-        if ( length $code ) {
-            my $rule_text = $expr;
-            $rule_text =~ s/^/## /mg;
-            $code = <<CODE_END;
-$rule_text
+    XFD::_indent $code if XFD::_indentomatic();
+
+    local $" = "\n";
+    $code = <<CODE_END;
 package XFD;
+
+use XML::Filter::Dispatcher::Runtime;
 
 use strict;
 
-$code;
+use vars qw( \$cur_self \$ctx );
+
+sub {
+  my ( \$d, \$postponement ) = \@_;
+$code};
 CODE_END
 
-            if ( $self->{Debug} ) {
-                my $c = $code;
-                my $ln = 1;
-                $c =~ s{^}{sprintf "%4d|", $ln++}gme;
-                warn $c;
-            }
-            ## TODO: move this eval out of the loop.
-            my @subs = eval $code;
-            if ( $@ ) {
-                my $c = $code;
-                my $ln = 1;
-                $c =~ s{^}{sprintf "%4d|", $ln++}gme;
-                die $@, $c;
-            }
-
-            push @{$ctx->{DocTests}}, @subs;
-        }
+    if ( $self->{Debug} ) {
+        my $c = $code;
+        my $ln = 1;
+        $c =~ s{^}{sprintf "%4d|", $ln++}gme;
+        warn $c;
     }
 
-    for ( keys %{$self->{Vars}} ) {
-        $self->xset_var( $_, @{$self->{Vars}->{$_}} );
+    ## TODO: move this eval out of the loop.
+    my @subs = eval $code;
+    if ( $@ ) {
+        my $c = $code;
+        my $ln = 1;
+        $c =~ s{^}{sprintf "%4d|", $ln++}gme;
+        die $@, $c;
     }
 
-    ## $ctx *is* the context for the doc's root node, but xset_var
-    ## sets variables in the slot we pass on to children (only) and
-    ## not peers.
-    $ctx->{Vars} = $ctx->{ChildVars};
-    delete $ctx->{ChildVars};
+    ## The "[]" is the postponement record to pass in.
+    push @{$doc_ctx->{start_document}}, map [ $_, $self, [] ], @subs;
 
     return $self ;
 }
 
-=item xresult
+=item xvalue
 
-    "string( foo )" => sub { xresult, "\n" }, # if imported
-    "string( foo )" => sub { print shift->xresult, "\n" },
+    "string( foo )" => sub { my $v = xvalue        }, # if imported
+    "string( foo )" => sub { my $v = shift->xvalue }, # if not
 
-Returns the result of the last EventPath evaluated; this is the result that
-fired the current rule.  The example prints all text node children of
-C<E<lt>fooE<gt>> elements, for instance.
+Returns the result of the last EventPath expression evaluated; this is
+the result that fired the current rule.  The example prints all text
+node children of C<E<lt>fooE<gt>> elements, for instance.
 
 =cut
 
-sub xresult() { ( shift || $cur_self )->{ExpressionResult} }
+sub xvalue() { ( shift || $XFD::cur_self )->{XValue} }
+
+=back
+
+=head2 EventPath Variables
+
+EventPath variables may be set in the current context using
+C<xset_var()>, and accessed using C<xget_var()>.  Variables set in a
+given context are visible to all child contexts.  If you want a variable
+to be set in an enclosed context and later retrieved in an enclosing
+context, you must set it in the enclosing context first, then alter it
+in the enclosed context, then retrieve it.
+
+EventPath variables are typed.
+
+EventPath variables set in a context are visible within that context and
+all enclosed contexts, but not outside of them.
+
+=cut
+
+=over
 
 =item xset_var
 
@@ -524,7 +848,7 @@ overrides any existing value, somewhat like using Perl's C<local>.
 =cut
 
 sub xset_var {
-    my $self = @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ ) ? shift : $cur_self;
+    my $self = @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ ) ? shift : $XFD::cur_self;
     croak
         "Wrong number of parameters (" . @_ . ") passed to xset_var, need 3.\n"
         if @_ != 3;
@@ -534,9 +858,8 @@ sub xset_var {
     croak "undefined name passed to xset_var\n" unless defined $name;
     croak "undefined value passed to xset_var\n" unless defined $name;
 
-    my $ctx = $self->{CtxStack}->[-1];
     ## TODO: rename the type non-classes to st other than "string", etc.
-    $ctx->{ChildVars}->{$name} = bless \$value, $type;
+    $self->{CtxStack}->[-1]->{Vars}->{$name} = bless \$value, $type;
 }
 
 
@@ -545,11 +868,8 @@ sub _look_up_var {
     my $self = shift;
     my ( $vname ) = @_;
 
-    my $ctx = $self->{CtxStack}->[-1];
-
 #use Data::Dumper; warn Data::Dumper::Dumper( $ctx );
-
-    return $ctx->{ChildVars}->{$vname} if exists $ctx->{ChildVars}->{$vname};
+    my $ctx = $self->{CtxStack}->[-1];
     return $ctx->{Vars}->{$vname} if exists $ctx->{Vars}->{$vname};
 
     die "Unknown variable '\$$vname' referenced in XPath expression\n";
@@ -570,7 +890,7 @@ Returns C<undef> if the variable is not set (or if it was set to undef).
 =cut
 
 sub xget_var {
-    my $self = @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ ) ? shift : $cur_self;
+    my $self = @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ ) ? shift : $XFD::cur_self;
     croak "No variable name passed to xget_var.\n"
         unless @_;
     croak "More than one variable name passed to xget_var.\n"
@@ -582,12 +902,8 @@ sub xget_var {
         unless defined $vname;
 
     my $ctx = $self->{CtxStack}->[-1];
-
-#use Data::Dumper; warn Data::Dumper::Dumper( $ctx );
     return
-        exists $ctx->{ChildVars}->{$vname}
-            ? ${$ctx->{ChildVars}->{$vname}}
-        : exists $ctx->{Vars}->{$vname}
+        exists $ctx->{Vars}->{$vname}
             ? ${$ctx->{Vars}->{$vname}}
             : undef;
 }
@@ -607,7 +923,7 @@ Returns C<undef> if the variable is not set.
 =cut
 
 sub xget_var_type {
-    my $self = @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ ) ? shift : $cur_self;
+    my $self = @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ ) ? shift : $XFD::cur_self;
     croak "No variable name passed to xget_var_type.\n"
         unless @_;
     croak "More than one variable name passed to xget_var_type.\n"
@@ -619,15 +935,282 @@ sub xget_var_type {
         unless defined $vname;
 
     my $ctx = $self->{CtxStack}->[-1];
-
     return
-        exists $ctx->{ChildVars}->{$vname}
-            ? ref $ctx->{ChildVars}->{$vname}
-        : exists $ctx->{Vars}->{$vname}
+        exists $ctx->{Vars}->{$vname}
             ? ref $ctx->{Vars}->{$vname}
             : undef;
 }
 
+=back
+
+=head2 Handlers
+
+XML::Filter::Dispatcher allows you to register handlers using
+C<set_handler()> and C<get_handler()>, and then to refer to them
+by name in actions.  These are part of the "general API".
+
+You may use any string for handler names that you like, including
+strings with spaces.  It is wise to avoid those standard, rarely used
+handlers recognized by parsers, such as:
+
+    DTDHandler
+    ContentHandler
+    DocumentHandler
+    DeclHandler
+    ErrorHandler
+    EntityResolver
+    LexicalHandler
+
+unless you are using them for the stated purpose.  (List taken from
+L<XML::SAX::EventMethodMaker|XML::SAX::EventMethodMaker>).
+
+Handlers may be set in the constructor in two ways: by using a name
+ending in "Handler" and passing it as a top level option:
+
+    my $f = XML::Filter::Dispatcher->new(
+        Handler => $h,
+        FooHandler => $foo,
+        BarHandler => $bar,
+        Rules => [
+           ...
+        ],
+    );
+
+Or, for oddly named handlers, by passing them in the Handlers hash:
+
+    my $f = XML::Filter::Dispatcher->new(
+        Handlers => {
+            Manny => $foo,
+            Moe   => $bar,
+            Jack  => $bat,
+        },
+        Rules => [
+           ...
+        ],
+    );
+
+Once declared in new(), handler names can be 
+used as actions.  The "well known" handler name "Handler" need not be
+predeclared.
+
+For exampled, this forwards all events except the C<start_element()>
+and C<end_element()> events for the root element's children, thus
+"hoisting" everything two levels below the root up a level:
+
+    Rules => [
+        '/*/*'   => undef,
+        'node()' => "Handler",
+    ],
+
+By default, no events are forwarded to any handlers: you must send
+individual events to an individual handlers.
+
+Normally, when a handler is used in this manner, XML::Filter::Dispatcher
+makes sure to send C<start_document()> and C<end_document()> events to
+it just before the first event and just after the last event.  This
+prevents sending the document events unless a handler actually receives
+other events, which is what most people expect (the alternative would be
+to preemptively always send a C<start_document()> to all handlers when
+when the dispatcher receives its C<start_document()>: ugh).
+
+To disable this for all handlers, pass the C<SuppressAutoStartDocument
+=> 1> option.
+
+=over
+
+=item set_handler
+
+    $self->set_handler( $handler );
+    $self->set_handler( $name => $handler );
+
+=cut
+
+sub set_handler {
+    my $self = shift;
+    my $name = @_ > 1 ? shift : "Handler";
+    $self->{Handlers}->{$name} = shift;
+}
+
+=item get_handler
+
+    $self->set_handler( $handler );
+    $self->set_handler( $name => $handler );
+
+=cut
+
+sub get_handler {
+    my $self = shift;
+    my $name = @_ > 1 ? shift : "Handler";
+    return $self->{Handlers}->{$name}
+        if exists $self->{Handlers}->{$name}
+}
+
+
+=head2 The xstack
+
+The xstack is a stack provided by XML::Filter::Dispatcher that is
+automatically unwound at each C<end_element()> to where it was just before
+the C<start_element()>.  It provides a quick and easy way to build an
+object or object hierarchy.  Here's an example of how to build and
+return a graph:
+
+    my $d = XML::Filter::Dispatcher->new(
+        Rules => [
+            graph  => sub { xpush( Graph->new ); },
+            vertex => sub {
+                xpeek->add_vertex(
+                    $_[1]->{Attributes}->{"{}name"}->{Value}
+                );
+            },
+            edge => sub {
+                xpeek->add_edge(
+                    $_[1]->{Attributes}->{"{}from"}->{Value},
+                    $_[1]->{Attributes}->{"{}to"  }->{Value},
+                );
+            },
+        ],
+    );
+
+    my $graph = QB->new( "graph", <<END_XML )->playback( $d );
+<graph>
+    <vertex name="0" />
+    <edge from="1" to="2" />
+    <edge from="2" to="1" />
+</graph>
+END_XML
+
+    print $graph, $graph->is_sparse ? " is sparse!\n" : "\n";
+
+should print "0,1-2,2-1 is sparse!\n".
+
+This is good if you can tell what object to add to the stack before
+seeing content.  Some XML parsing is more general than that: if you see
+no child elements, you want to create one class to contain just
+character content, otherwise you want to add a container class to
+contain the child nodes.
+
+=over
+
+=item xpush
+    
+Push values on to the xstack.  All will be removed from the xstack
+at the end of the current element.  The topmost item on the xstack is
+available through the peek method.  Elements xpushed before the first
+element (usually in the C<start_document()> event) remain on the stack
+after the document has been parsed and a call like
+
+   my $elt = $dispatcher->xpop;
+
+can be used to retrieve them.
+
+=cut
+
+sub xpush {
+    local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
+    push @{$XFD::cur_self->{XStack}}, @_;
+}
+
+=item xpeek
+
+    Rules => [
+        "foo" => sub {
+            my $elt = $_[1];
+            xpeek->set_name( $elt->{Attributes}->{"{}name"} );
+        },
+        "/end::*" => sub {
+            my $self = shift;
+            XXXXXXXXXXXXXXXXXXXX
+        }
+    ],
+
+
+Returns the top element on the xstack, which was the last thing
+pushed in the current context.  Throws an exception if the xstack is
+empty.  To check for an empty stack, use eval:
+
+    my $stack_not_empty = eval { xpeek };
+
+To peek down the xstack, use a Perlish index value.  The most
+recently pushed element is index number -1:
+
+    $xpeek( -1 );    ## Same as $self->peek
+
+The first element pushed on the xstack is element 0:
+
+    $xpeek( 0 );
+
+An exception is thrown if the index is off either end of the stack.
+
+=cut
+
+sub xpeek { 
+    unless ( @_ ) {
+        croak "xpeek() called on empty stack"
+            unless @{$XFD::cur_self->{XStack}};
+
+        return $XFD::cur_self->{XStack}->[-1];
+    }
+
+    local $XFD::cur_self = shift if UNIVERSAL::isa( $_[0], __PACKAGE__ );
+
+    my $index = shift;
+    $index = -1 unless defined $index;
+
+    croak "xpeek( $index ) off the end of the stack"
+        if     $index >      $#{$XFD::cur_self->{XStack}}
+            || $index < -1 - $#{$XFD::cur_self->{XStack}};
+
+    return $XFD::cur_self->{XStack}->[$index];
+}
+
+=item xpop
+
+
+    my $d = XML::Filter::Dispatcher->new(
+        Rules => [
+            ....rules to build an object hierarchy...
+        ],
+    );
+
+    my $result = $d->xpop
+
+Removes an element from the xstack and returns it.  Usually
+called in a end_document handler or after the document returns to
+retrieve a "root" object placed on the stack before the root element
+was started.
+
+=cut
+
+sub xpop { 
+    local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
+
+    croak "xpop() called on empty stack"
+        unless @{$XFD::cur_self->{XStack}};
+
+    return pop @{$XFD::cur_self->{XStack}};
+}
+
+=item xstack_empty
+
+    my $d = XML::Filter::Dispatcher->new(
+        Rules => [
+            ....rules to build an object hierarchy...
+        ],
+    );
+
+Handy for detecting a nonempty stack:
+
+    warn xpeek unless xstack_empty;
+
+Because C<xpeek> and C<xpop> throw exceptions on an empty stack,
+C<xstack_empty> is needed to detect whether it's safe to call them.
+
+=cut
+
+sub xstack_empty { 
+    local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
+    return ! @{$XFD::cur_self->{XStack}};
+}
 
 =back
 
@@ -638,66 +1221,126 @@ sub xget_var_type {
 ##
 
 ## a helper called by the handlers...
-sub _check_tests {
+## TODO: optimize most of this away for all events except start_document and
+## start_ element, since these are the only two events that can have
+## child events.  The others should be able to get away with much simpler logic.
+
+sub _call_queued_subs {
     my $self = shift ;
-    my ( $test_type, $node_type, $event_type, $child_ctx, @sax_args ) = @_;
+    my $event_type = shift;
 
-    local $cur_self = $self;
+    local $XFD::cur_self = $self;
 
-    my $ctx = $self->{CtxStack}->[-1];
-    $ctx->{NodeType}  = $node_type;
-    $ctx->{EventType} = $event_type;
-    $ctx->{Node}      = $sax_args[0];
-    $ctx->{SAXArgs}   = \@sax_args;
+    $XFD::ctx->{EventType} = $event_type;
+    $XFD::ctx->{Node}      = $_[0];
+    $XFD::ctx->{HighScore} = -1;
 
-    %XFD::already_ran = ();
-    @{$ctx->{Precursors}} = ();
-    if ( exists $ctx->{DescendantTests} ) {
-        for ( @{$ctx->{DescendantTests}} ) {
-            $_->( $self, $ctx, $child_ctx );
-        }
-        ## Use a new array so modifications to the child context don't
-        ## propogate back up.  Only need to do this on elts, since only
-        ## they have descendants.
-        $child_ctx->{DescendantTests} = [ @{$ctx->{DescendantTests}} ]
-            if exists $ctx->{DescendantTests} && $test_type eq "EltTests";
+    for ( @{$XFD::ctx->{$event_type}} ) {
+        $_->[0]->( @{$_}[1..$#$_], @_ );
     }
 
-    if ( exists $ctx->{$test_type} ) {
-        for ( @{$ctx->{$test_type}} ) {
-            $_->( $self, $ctx, $child_ctx );
+    $self->_queue_pending_event( $XFD::ctx );
+}
+
+
+sub _call_queued_end_subs {
+    my $self = shift ;
+    my $event_type = shift;
+    my $start_ctx = shift;
+
+    local $XFD::cur_self = $self;
+
+    $XFD::ctx->{EventType} = $event_type;
+    $XFD::ctx->{Node}      = $_[0];
+    $XFD::ctx->{HighScore} = -1;
+
+    for ( @{$start_ctx->{EndSubs}} ) {
+        $_->[0]->( @{$_}[1..$#$_], @_ )
+    }
+
+    $self->_queue_pending_event( $XFD::ctx );
+}
+
+
+sub _queue_pending_event {
+    my $self = shift;
+    local $XFD::cur_self = $self;
+
+    my ( $ctx ) = @_;
+
+    if ( exists $ctx->{Action}
+        || ( $ctx->{Postponements} && @{$ctx->{Postponements}} )
+    ) {
+        emit_trace_SAX_message "EventPath: queuing pending event ", int $ctx if is_tracing;
+        push @{$self->{PendingEvents}}, $ctx;
+    }
+    else {
+        emit_trace_SAX_message "EventPath: not queuing event ", int $ctx if is_tracing;
+    }
+
+    while ( @{$self->{PendingEvents}}
+        && ! ( exists $self->{PendingEvents}->[0]->{Postponements}
+            && @{$self->{PendingEvents}->[0]->{Postponements}}
+        )
+    ) {
+        my $c = shift @{$self->{PendingEvents}};
+        if ( exists $c->{Action} ) {
+            ## The "-1" here implements the "last match wins" logic.
+            ## All rules are evaluated in order; the last rule to evaluate
+            ## queues its action last.  TODO: test this in the face of
+            ## precursors; actions may need to be set based on action
+            ## numbers or something.
+            my $a = delete $c->{Action};
+            emit_trace_SAX_message "EventPath: *** executing action for event ", int $c, " ***" if is_tracing;
+            local $XFD::ctx = $c;
+            $self->{LastHandlerResult} = $a->();
+emit_trace_SAX_message "EventPath: result set to ", defined $self->{LastHandlerResult} ? "'$self->{LastHandlerResult}'" : "undef" if is_tracing;
+        }
+        else {
+            emit_trace_SAX_message "EventPath: discarding event ", int $c if is_tracing;
         }
     }
 
-    $child_ctx->{Text} = ""
-        if exists $ctx->{Text};
+    emit_trace_SAX_message
+        "EventPath: ",
+        @{$self->{PendingEvents}} . " events pending (",
+        join( ", ",
+            map
+                int( $_ ).":".@{$_->{Postponements}}.":".(
+                    exists $_->{Action}
+                        ? $_->{Action}
+                        : "<No action>"
+                ),
+                @{$self->{PendingEvents}}
+        ),
+        ")"  if is_tracing;
+}
 
-    $child_ctx->{Vars} = {
-        %{$ctx->{Vars}      || {}},
-        %{$ctx->{ChildVars} || {}},
-    };
 
-    %{$ctx->{ChildVars}} = () if exists $ctx->{ChildVars};
-    return $child_ctx;
+sub _build_ctx {
+    my $self = shift;
+
+    my $parent_ctx = $self->{CtxStack}->[-1];
+    my $ctx = { %{$parent_ctx->{ChildCtx}} };
+    $ctx->{Vars} = { %{$parent_ctx->{Vars}} }
+        if exists $parent_ctx->{Vars};
+    return $ctx;
 }
 
 
 sub start_document {
     my $self = shift ;
 
-    $self->{CtxStack} = [ $self->{DocCtx} ] ;   ## Context Stack
+    $self->{XStack} = [];
+    delete $self->{DocStartedFlags};
+    $self->{PendingEvents} = [];
 
-    ## precalc this because most actions need it.
-    local $self->{CtxStack}->[-1]->{IsStartEvent} = 1;
+    local $XFD::ctx = $self->{DocCtx};
+    $self->{CtxStack} = [ $XFD::ctx ];
+    $self->_call_queued_subs( "start_document", @_ )
+        if $XFD::ctx->{start_document};
 
-    CORE::push @{$self->{CtxStack}}, $self->_check_tests(
-        "DocTests",
-        "document",
-        "start_document",
-        {},
-        @_
-    );
-    $self->SUPER::start_document( @_ );
+    return;
 }
 
 
@@ -705,72 +1348,52 @@ sub end_document {
     my $self = shift ;
     my ( $doc ) = @_;
 
-    my $child_ctx = CORE::pop @{$self->{CtxStack}};
+    pop @{$self->{CtxStack}};
 
-    my $ctx = $self->{CtxStack}->[-1];
-    $ctx->{Text} .= $child_ctx->{Text}
-        if exists $ctx->{Text};
+    confess "Bug: context stack should be empty!"
+        unless ! @{$self->{CtxStack}};
 
-    ## precalc this because most actions need it.
-    local $ctx->{IsEndEvent} = 1;
-
-    $self->_check_tests(
-        "DocTests",
-        "document",
-        "end_document",
-        $child_ctx,
-        @_
-    );
-
-    my $r = $self->SUPER::end_document( @_ );
-
-    if ( exists $ctx->{TempHandler} ) {
-        $self->set_handler( $ctx->{TempHandler} );
-        delete $ctx->{TempHandler};
-        $self->SUPER::end_document({});
+    if ( $self->{DocCtx}->{EndSubs} ) {
+        local $XFD::ctx = {};
+        $self->_call_queued_end_subs( end_document => $self->{DocCtx}, @_ );
     }
-    
-    return $r;
+
+    if ( exists $self->{AutoStartedHandlers} ) {
+        for ( reverse @{$self->{AutoStartedHandlers}} ) {
+            $self->{LastHandlerResult} = $_->end_document( {} );
+        }
+    }
+
+    @{$self->{XStack}} = ();
+
+    return $self->{LastHandlerResult};
 }
 
 
 sub start_element {
     my $self = shift ;
-    my ( $elt) = @_ ;
+    my ( $elt ) = @_ ;
 
-    ## precalc this because most actions need it.
-    local $self->{CtxStack}->[-1]->{IsStartEvent} = 1;
+    push @{$self->{CtxStack}}, local $XFD::ctx = $self->_build_ctx;
 
-    my $child_ctx = $self->_check_tests(
-        "EltTests",
-        "element",
-        "start_element",
-        {},
-        @_
-    );
-    CORE::push @{$self->{CtxStack}}, $child_ctx;
+    $XFD::ctx->{XStackLevel} = $#{$self->{XStack}};
 
-    ## Scan the attributes
-    if (   exists $elt->{Attributes} 
-        && $elt->{Attributes} 
-        && exists $child_ctx->{AttrTests}
+    $self->_call_queued_subs( "start_element", @_ )
+        if $XFD::ctx->{start_element};
+
+    if ( exists $XFD::ctx->{ChildCtx}->{attribute}  ## Any attr handlers?
+        && exists $elt->{Attributes}           ## Any attrs?
     ) {
         for my $attr ( values %{$elt->{Attributes}} ) {
-            ## No need to push the new context, no nodes hang below attr nodes.
-            {
-                local $child_ctx->{IsStartEvent} = 1;
-                local $child_ctx->{IsEndEvent}   = 1;
-                $self->_check_tests(
-                    "AttrTests",
-                    "attribute",
-                    "start_attribute",  ## not a real SAX event
-                    {},
-                    $attr,
-                );
-            }
+            local $XFD::ctx = $self->_build_ctx;
+            $self->_call_queued_subs(
+                "attribute",  ## not a real SAX event
+                $attr,
+            );
         }
     }
-    $self->SUPER::start_element( @_ );
+
+    return;
 }
 
 
@@ -778,104 +1401,34 @@ sub end_element {
     my $self = shift ;
     my ( $elt ) = @_ ;
 
-    ## This pop matches the push in start_element.
-    my $child_ctx = CORE::pop @{$self->{CtxStack}};
+    my $start_ctx = pop @{$self->{CtxStack}}; # Remove the child context
 
-    $self->{CtxStack}->[-1]->{Text} .= $child_ctx->{Text}
-        if exists $self->{CtxStack}->[-1]->{Text};
-
-    my $ctx = $self->{CtxStack}->[-1];
-    local $ctx->{IsEndEvent} = 1;
-
-    ## Need to pass $child_ctx in here in case we've been collecting
-    ## text in $child_ctx->{Text}.  Some rule expression will want this
-    ## to look at or to return as a result value.
-    $self->_check_tests(
-        "EltTests",
-        "element",
-        "end_element",
-        $child_ctx,
-#        @_
-@{$ctx->{SAXArgs}} ## Hack to allow attributes to be avail in IsEndEvent processing
-    );
-
-    my $r = $self->SUPER::end_element( @_ );
-
-    if ( exists $ctx->{TempHandler} ) {
-        $self->SUPER::end_document({});
-        $self->set_handler( $ctx->{TempHandler} );
-        delete $ctx->{TempHandler};
+    if ( $start_ctx->{EndSubs} ) {
+        local $XFD::ctx = {};
+        $self->_call_queued_end_subs( end_element => $start_ctx, @_ );
     }
 
-    return $r;
+    splice @{$self->{XStack}}, $start_ctx->{XStackLevel} + 1;
+
+    return;
 }
 
 
-sub characters {
+compile_missing_methods __PACKAGE__, <<'CODE_END', sax_event_names;
+sub <EVENT> {
     my $self = shift ;
+    return unless $self->{CtxStack}->[-1]->{ChildCtx}->{<EVENT>};
+
     my ( $data ) = @_;
 
-    ## precalc this because most actions need it.
-    my $ctx = $self->{CtxStack}->[-1];
-    local $ctx->{IsStartEvent} = 1;
-    local $ctx->{IsEndEvent} = 1;
+    local $XFD::ctx = $self->_build_ctx;
 
-    $ctx->{Text} .= $data->{Data}
-        if exists $ctx->{Text};
+    $self->_call_queued_subs( <EVENT> => @_ );
+    $self->_call_queued_end_subs( @_ ) if $XFD::ctx->{EndSubs};
 
-    my $child_ctx = $self->_check_tests(
-        "TextTests",
-        "text",
-        "characters",
-        {},
-        @_
-    );
-
-    $self->SUPER::characters( @_ );
     return undef;
 }
-
-
-sub comment {
-    my $self = shift ;
-    my ( $data ) = @_;
-
-    ## precalc this because most actions need it.
-    local $self->{CtxStack}->[-1]->{IsStartEvent} = 1;
-    local $self->{CtxStack}->[-1]->{IsEndEvent} = 1;
-
-    my $child_ctx = $self->_check_tests(
-        "CommentTests",
-        "comment",
-        "comment",
-        {},
-        @_
-    );
-
-    $self->SUPER::comment( @_ );
-    return undef;
-}
-
-
-sub processing_instruction {
-    my $self = shift ;
-    my ( $data ) = @_;
-
-    ## precalc this because most actions need it.
-    local $self->{CtxStack}->[-1]->{IsStartEvent} = 1;
-    local $self->{CtxStack}->[-1]->{IsEndEvent} = 1;
-
-    my $child_ctx = $self->_check_tests(
-        "PITests",
-        "processing-instruction",
-        "processing_instruction",
-        {},
-        @_
-    );
-
-    $self->SUPER::processing_instruction( @_ );
-    return undef;
-}
+CODE_END
 
 =head2 Notes for XPath Afficianados
 
@@ -890,23 +1443,12 @@ Much of XPath's power comes from the concept of a "node set".  A node
 set is a set of nodes returned by many XPath expressions.
 Event XPath fires a rule once for each node the rule applies to.  If there
 is a location path in the expression, the rule will fire once for each
-document element (perhaps twice if both start and end SAX events are
-trapped, see C<is-start-event()> and C<is-end-event()> below.
+matching event (perhaps twice if both start and end SAX events are
+trapped, see XXXX below.
 
 Expressions like C<0>, C<false()>, C<1>, and C<'a'> have no location
 path and apply to all nodes (including namespace nodes and processing
 instructions).
-
-=item *
-
-Because of the implied set membership operation on node set expressions,
-C<foo>, C<./foo>, C<.//foo> and C<//foo> are all equivalent rules; they all
-fire for every element node named "foo" in the document.  This is
-because the context is always that of the current node for the SAX event
-(except for attributes, which SAX doesn't have an event for, but we act
-like it did; ie each attr gets it's own context to operate in).  This is
-a lot like the C<match=> expression in XSLT C<E<lt>xsl:templateE<gt>>
-constructs.
 
 =item *
 
@@ -916,9 +1458,9 @@ XPath expressions, such as using C<&&> or C<==> instead of C<and> or C<=>.
 =item *
 
 SAX does not define events for attributes; these are passed in to the
-start_element (but not end_element) methods as part of the element
-node.  XML::Filter::Dispatcher does allow selecting attribute nodes and
-passes in just the selected attribute node, see the examples above.
+start_element (but not end_element) methods as part of the element node.
+XML::Filter::Dispatcher emulates an event for each attribute in order to
+allow selecting attribute nodes.
 
 =item *
 
@@ -926,6 +1468,8 @@ Axes in path steps (/foo::...)
 
 Only some axes can be reasonably supported within a SAX framework without
 building a DOM and/or queueing SAX events for in-document-order delivery.
+
+On the other hand, lots of SAX-specific Axes are supported.
 
 =item *
 
@@ -945,85 +1489,192 @@ write
 
     "string( quotation )" => sub {
         my $self = shift;
-        print "He said '", $self->expression_result, "'\n'";
+        print "He said '", xvalue, "'\n'";
     },
 
 The former is unsafe; consider the XML:
 
     <quotation>I am <!-- bs -->GREAT!<!-- bs --></quotation>
 
-Rules like C<.../text()> will fire twice, which is not what is needed here.
+Rules like C<.../text()> will fire twice, which is not what is needed
+here.
 
-Rules like C<string( ... )> will fire once, at the end_element event, with
-all descendant text of quotation as the expression result.
+Rules like C<string( ... )> will fire once, at the end_element event,
+with all descendant text of quotation as the expression result.
 
 You can also place an L<XML::Filter::BufferText|XML::Filter::BufferText>
-instance upstream of XML::Filter::Dispatcher if you really want to
-use the former syntax (but the C<GREAT!> example will still generate
-more than one event due to the comment).
+instance upstream of XML::Filter::Dispatcher if you really want to use
+the former syntax (but the C<GREAT!> example will still generate more
+than one event due to the comment).
 
 =item *
 
 Axes
 
+All axes are implemented except for those noted below as "todo" or "not
+soon".
+
+Also except where noted, axes have a principal event type of
+C<start_element>.  This node type is used by the C<*> node type test.
+
+Note: XML::Filter::Dispatcher tries to die() on nonsensical paths like
+C</a/start-document::*> or C<//start-cdata::*>, but it may miss some.
+This is meant to help in debugging user code; the eventual goal is to
+catch all such nonsense.
+
 =over
 
 =item o
 
-self (yes)
+ancestor:: (XPath, todo, will be limited)
 
 =item o
 
-descendant (yes)
+ancestor-or-self:: (XPath, todo, will be limited)
 
 =item o
 
-descendant-or-self (yes)
+C<attribute::> (XPath, C<attribute>)
 
 =item o
 
-child (yes)
+C<child::> (XPath)
 
 =item o
 
-attribute (yes)
+C<descendant::> (XPath)
 
 =item o
 
-namespace (todo)
+C<descendant-or-self::> (XPath)
 
 =item o
 
-ancestor (todo, will be limited)
+C<end::> (SAX, C<end_element>, C<end_document>)
+
+Like C<self::>, but selects the C<end_...> event of the document or
+element context node.
+
+This is usually used in preference to C<end-document::> or
+C<end-element::> due to it's brevity.  It is also easier to optimize
+when used with other rules:
+
+    'foo'        => ...
+    'foo/end::*' => ...
+
+Because this selects the end document or end element event, most
+of the path tests that may follow other axes are not valid following
+this axis.  self:: are the only legal axes that may occur to the right
+of this axis.
+
+This differs from C<end-element::> in that it is like C<self::> and not
+C<child::>.  The C<foo/end::*> rule matches C<< </foo> >>, whereas
+C<foo/end-element::*> matches the end tags of C<< <foo> >>'s child
+elements.
 
 =item o
 
-ancestor-or-self (todo, will be limited)
+C<end-document::> (SAX, C<end_document>)
+
+B<EXPERIMENTAL>.  This axis is confusing compared to and
+C<end-element::>, and is not necessary given C<end::>.
+
+Like C<self::>, but selects the C<end_...> event of the document
+context node.
+
+Note: Because this selects the end document event, most of the path tests
+that may follow other axes are not valid following this axis.
+self:: are the only legal axes that may occur to the
+right of this axis.
 
 =item o
 
-parent (todo, will be limited)
+C<end-element::> (SAX, C<end_element>)
+
+B<EXPERIMENTAL>.  This axis is confusing compared to C<end::> and
+C<end-document::>, and is not necessary given C<end::>.
+
+Like C<child::>, but selects the C<end_...> event of the element
+context node.  This is like C<start-element::>, but different from
+C<end::> and C<end-document::>.
+
+Note: Because this selects the end element event, most of the path tests
+that may follow other axes are not valid following this axis.
+attribute:: and self:: are the only legal axes that may occur to the
+right of this axis.
+
+=item o
+
+C<following::> (XPath, B<not soon>)
+
+=item o
+
+C<following-sibling::> (XPath, B<not soon>)
+
+Implementing following axes will take some fucky postponement logic and
+are likely to wait until I have time.  Until then, setting a flag in
+$self in one handler and checking in another should suffice for most
+uses.
+
+=item o
+
+C<namespace::> (XPath, C<namespace>, B<todo>)
+
+=item o
+
+C<parent::> (XPath, B<todo (will be limited)>)
 
 parent/ancestor paths will not allow you to descend the tree, that would
 require DOM building and SAX event queueing.
 
 =item o
 
-preceding (no: reverse axis, would require DOM building)
+C<preceding::> (XPath, B<not soon>)
 
 =item o
 
-preceding-sibling (no: reverse axis, would require DOM building)
+C<preceding-sibling::> (XPath, B<not soon>)
+
+Implementing reverse axes will take some fucky postponement logic and
+are likely to wait until I have time.  Until then, setting a flag in
+$self in one handler and checking in another should suffice for most
+uses.
 
 =item o
 
-following (no: forward axis, would require DOM building and rule
-activation queueing)
+C<self::> (XPath)
 
 =item o
 
-following-sibling (no: forward axis, would require DOM building
-and rule activation queueing)
+C<start::> (SAX, C<start_document>, C<start_element> )
+
+This is like self::, but selects only the C<start_document> or
+C<start_element> events.  This is usually used in preference to
+C<start-document::> or C<start-element::> due to it's brevity.
+
+It's rarely used to drive code handlers because rules that match
+document or element events fire code handlers on the C<start_element>
+event and not the C<end_element> event (however, when a SAX handler
+is used, such expressions send both start and end events to the
+downstream handler).
+
+=item o
+
+C<start-document::> (SAX, C<start_document>)
+
+B<EXPERIMENTAL>.  This axis is confusing compared to and
+C<start-element::>, and is not necessary given C<start::>.
+
+This is like C<self::>, but selects only the C<start_document> events.
+
+=item o
+
+C<start-element::> (SAX)
+
+B<EXPERIMENTAL>.  This axis is confusing compared to C<start::> and
+C<start-document::>, and is not necessary given C<start::>.
+
+This is like C<child::>, but selects only the C<start_element> events.
 
 =back
 
@@ -1052,7 +1703,9 @@ contains( string, string )
 
 =item o
 
-normalize-space( string )
+normalize-space( string? )
+
+C<normalize-space()> is equivalent to C<normalize-space(.)>.
 
 =item o
 
@@ -1060,7 +1713,7 @@ starts-with( string, string )
 
 =item o
 
-string( object )
+string(), string( object )
 
 Object may be a number, boolean, string, or the result of a location path:
 
@@ -1068,22 +1721,11 @@ Object may be a number, boolean, string, or the result of a location path:
     string( /a/b/c );
     string( @id );
 
-Unlike normal DOM oriented XPath, calling string on a location path causes
-the string to be calculated once each time the location path matches.  So
-a run like:
-
-    "string(@part-number)" => sub {
-        my $self = shift;
-        print "Part number: ", $self->expression_result, "\n";
-    }
-
-will print as many times as there are C<part-number> attributes in the
-document.  This is true anywhere an XPath node set is used as an
-argument to a function or logical operator.
+C<string()> is equivalent to C<string(.)>.
 
 =item o
 
-string-length( string )
+string-length( string? )
 
 string-length() not supported; can't stringify the context node without
 keeping all of the context node's children in mempory.  Could enable it
@@ -1126,9 +1768,11 @@ false()
 
 =item o
 
-not( object )
+lang( string ) B<TODO>.
 
-See notes about node sets for the string() function above.
+=item o
+
+not( boolean )
 
 =item o
 
@@ -1152,17 +1796,63 @@ floor( number )
 
 =item o
 
-number( object )
+number( object? )
 
 Converts strings, numbers, booleans, or the result of a location path
-(C<number( /a/b/c )>).  See the C<string( object )> description above for more
-information on location paths.
+(C<number( /a/b/c )>).
 
-Unlike real XPath, this dies if the object cannot be cleanly converted in to a
-number.  This is due to Perl's varying level of support for NaN, and may change
-in the future.
+Unlike real XPath, this dies if the object cannot be cleanly converted
+in to a number.  This is due to Perl's varying level of support for NaN,
+and may change in the future.
+
+C<number()> is equivalent to C<number(.)>.
+
+=item o
+
+round ( number )
+
+=item o sum( node-set ) B<TODO>.
 
 =back
+
+=item *
+
+Node Set Functions
+
+Many of these cannot be fully implemented in an event oriented
+environment.
+
+=over
+
+=item o
+
+last() B<TODO>.
+
+=item o
+
+position() B<TODO>.
+
+=item o
+
+count( node-set ) B<TODO>.
+
+=back
+
+=item o
+
+id( object ) B<TODO>.
+
+=item o
+
+local-name( node-set? )
+
+=item o
+
+namespace-uri( node-set? )
+
+=item o
+
+name( node-set? )
 
 =item *
 
@@ -1175,28 +1865,6 @@ No support for nodesets, though.
 All logical operators
 
 Supports limited nodesets, see the string() function description for details.
-
-=item *
-
-Additional Functions
-
-=over
-
-=item o
-
-is-end-event()
-
-This is en extension function that returns C<true> when an end_element or
-end_document event is being processed.
-
-=item o
-
-is-start-event()
-
-This is en extension function that returns C<true> when handling and SAX event
-other than end_element or end_document.
-
-=back
 
 =back
 
@@ -1243,24 +1911,6 @@ id()
 =item o
 
 lang()
-
-=item o
-
-local-name()
-
-May not be able to handle local-name( arg ), just argless local-name().
-
-=item o
-
-name()
-
-May not be able to handle name( arg ), just argless name().
-
-=item o
-
-namespace-uri()
-
-May not be able to handle namespace-uri( arg ), just argless namespace-uri().
 
 =item o
 

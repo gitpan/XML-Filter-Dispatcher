@@ -14,19 +14,16 @@ my @log;
 my $d = XML::Filter::Dispatcher->new(
     Rules => [
         "/"    => sub {
-warn "/";
             xset_var a => string => "aaa";
             ok xget_var( "a" ), "aaa", "/ => xgetvar( a )";
         },
-        "foo" => sub {
-warn "foo";
+        "//foo" => sub {
             ok xget_var( "a" ), "aaa", "foo => xgetvar( a )";
             ok ! defined xget_var( "b" ), 1, "! defined foo => xgetvar( b )";
             xset_var b => string => "bbb";
             ok xget_var( "b" ), "bbb", "foo => xgetvar( b )";
         },
-        "bar" => sub {
-warn "bar";
+        "//bar" => sub {
             ok xget_var( "a" ), "aaa", "bar => xgetvar( a )";
             ok xget_var( "b" ), "bbb", "bar => xgetvar( b )";
         },
