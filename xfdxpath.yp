@@ -1,24 +1,56 @@
-## Grammar by James Clark.  This would make a good XS routine :)
+## Grammar by James Clark.  Funky Perl by yours truely.
 
 %{
+    use Carp;
+    use UNIVERSAL;
     use XML::Filter::Dispatcher::Ops;
 
     sub _no {
         my $p = shift;
-        push @{$p->{USER}->{NONONO}}, join(
+#        push @{$p->{USER}->{NONONO}}, join(
+die join(
             "",
             "XPath construct not supported: ",
-            join( "", map ref $_ ? do {
-                my $f = ref $_;
-                $f =~ s/^XFD:://;
-                $f;
-            } : $_, @_ ),
+            join( " ", map
+                defined $_
+                    ? ref $_
+                        ? do {
+                            my $f = ref $_;
+                            $f =~ s/^XFD:://;
+                            $f;
+                        }
+                        : $_
+                    : "<undef>" ,
+                @_
+            ),
             " (grammar rule at ",
             (caller)[1],
             ", line ",
             (caller)[2],
             ")"
         );
+
+        return ();
+    }
+
+    sub _step {
+        my ( $p, $axis, $node_test, @predicates ) = @_;
+
+        shift @predicates if @predicates && ! defined $predicates[0];
+
+        warn "axis not an op: '$axis'" if defined $axis && !ref $axis;
+        warn "node test not an op: '$node_test'" if defined $node_test && !ref $node_test;
+
+        my @ops;
+        push @ops, $axis if defined $axis && ref $axis;
+        push @ops, $node_test if $node_test && ref $node_test;
+        push @ops, @predicates;
+
+        for ( 0..$#ops-1 ) {
+            $ops[$_]->set_next( $ops[$_+1] );
+        }
+            
+        return $ops[0];
     }
 %}
 
@@ -60,170 +92,216 @@
 %token DIV
 # %token QUO
 
+## We also catch some Perl tokens so we can give useful advice
+%token EQUALS_EQUALS
+%token VBAR_VBAR
+%token AMP_AMP
+
 %%
 
+## NOTE: I use the paren-less format for Perl subcalls here so that
+## perl will warn me if I don't have one defined.
+
 expr :
-  or_expr
-  ;
+    or_expr
+    ;
 
 or_expr :
-  and_expr
-  | or_expr OR and_expr { _no @_; }
-  ;
+    and_expr
+    | or_expr OR and_expr                  { XFD::or [ @_[1,3] ] }
+    | or_expr VBAR_VBAR and_expr           {
+        die "XPath uses 'or' instead of Perl's '||'\n";
+    }
+    ;
 
 and_expr :
-  equality_expr
-  | and_expr AND equality_expr { _no @_; }
-  ;
+    equality_expr
+    | and_expr AND equality_expr           { XFD::and [ @_[1,3] ] }
+    | and_expr AMP_AMP equality_expr       {
+        die "XPath uses 'and' instead of Perl's '&&'\n";
+    }
+    | and_expr AMP equality_expr       {
+        die "XPath uses 'and' instead of Perl's '&'\n";
+    }
+    ;
 
 equality_expr :
-  relational_expr
-  | equality_expr EQUALS relational_expr { _no @_; }
-  ;
+    relational_expr
+    | equality_expr EQUALS relational_expr      { XFD::equals [ @_[1,3] ] }
+    | equality_expr BANG_EQUALS relational_expr { XFD::not_equals [ @_[1,3] ] }
+    | equality_expr EQUALS_EQUALS relational_expr { 
+        die "XPath uses '=' instead of Perl's '=='\n";
+    }
+    ;
 
 relational_expr :
-  additive_expr
-  | relational_expr LT additive_expr { _no @_; }
-  | relational_expr GT additive_expr { _no @_; }
-  | relational_expr LTE additive_expr { _no @_; }
-  | relational_expr GTE additive_expr { _no @_; }
-  ;
+    additive_expr
+    | relational_expr LT additive_expr    { XFD::lt  [ @_[1,3] ] }
+    | relational_expr GT additive_expr    { XFD::gt  [ @_[1,3] ] }
+    | relational_expr LTE additive_expr   { XFD::lte [ @_[1,3] ] }
+    | relational_expr GTE additive_expr   { XFD::gte [ @_[1,3] ] }
+    ;
 
 additive_expr :
-  multiplicative_expr
-  | additive_expr PLUS multiplicative_expr { _no @_; }
-  | additive_expr MINUS multiplicative_expr { _no @_; }
-  ;
+    multiplicative_expr
+    | additive_expr PLUS multiplicative_expr  { XFD::addition    [ @_[1,3] ] }
+    | additive_expr MINUS multiplicative_expr { XFD::subtraction [ @_[1,3] ] }
+    ;
 
 multiplicative_expr :
-  unary_expr
-  | multiplicative_expr MULTIPLY unary_expr { _no @_; }
-  | multiplicative_expr DIV unary_expr { _no @_; }
-  | multiplicative_expr MOD unary_expr { _no @_; }
-  ;
+    unary_expr
+    | multiplicative_expr MULTIPLY unary_expr { XFD::multiplication[ @_[1,3] ] }
+    | multiplicative_expr DIV unary_expr      { XFD::division      [ @_[1,3] ] }
+    | multiplicative_expr MOD unary_expr      { XFD::modulus       [ @_[1,3] ] }
+    ;
 
 unary_expr :
-  union_expr
-  | '-' unary_expr { _no @_; }
-  ;
+    union_expr
+    | MINUS unary_expr                        { XFD::negation $_[2] }
+    ;
 
 union_expr :
-  path_expr
-  | union_expr VBAR path_expr { _no @_; }
-  ;
+    path_expr
+    | union_expr VBAR path_expr          {
+        my $union;
+        if ( $_[1]->isa( "XFD::union" ) ) {
+            $_[1]->add( $_[3] );
+            $union = $_[1];
+        }
+        else {
+            $union = XFD::union->new( @_[1,3] )
+        }
+        $union;
+    }
+    ;
 
 path_expr :
-  location_path
-  | primary_expr predicates segment { _no @_; }
-  ;
+    location_path
+    | primary_expr predicates segment    {
+        if ( defined $_[2] ) {
+            die "This XPath implementation has no node sets, (expression)[predicate] is not supported\n";
+        }
+        if ( defined $_[3] ) {
+            die "This XPath implementation has no node sets, (expression)/path is not supported\n";
+        }
+        $_[1];
+    }
+    ;
 
 segment :
-  /* empty */                          { _no @_; }
-  | SLASH relative_location_path       { _no @_; }
-  | SLASH_SLASH relative_location_path { _no @_; }
-  ;
+    /* empty */
+    | SLASH relative_location_path       
+    | SLASH_SLASH relative_location_path
+    ;
 
 location_path :
-  relative_location_path { _no @_; }
-  | absolute_location_path                 # { XFD::location->new( @_ ) }
-  ;
+    relative_location_path
+    | absolute_location_path
+    ;
 
 absolute_location_path :
-  SLASH                                { XFD::doc_node->new( @_, undef ) }
-  | SLASH relative_location_path       { XFD::doc_node->new( @_ ) }
-  | SLASH_SLASH relative_location_path { 
-      ## /descendant-or-self::node()/relative_location_path
-      my $step = XFD::step->new(
-          $_[0],
-          "descendant-or-self",
-          XFD::node_type->new( $_[0], "node" ),
-          undef, ## predicates.
-      );
-      $step->set_next( $_[2] );
-      XFD::doc_node->new( $_[0], $_[1], $step );
-  };
+    SLASH                                { XFD::doc_node->new }
+    | SLASH relative_location_path       {
+        my $op = XFD::doc_node->new( @_[0..1] );
+        $op->set_next( $_[2] );
+        $op;
+    }
+    | SLASH_SLASH relative_location_path { 
+        ## /descendant-or-self::node()/relative_location_path
+        my $op = XFD::doc_node->new( @_[0..1] );
+        my $step = _step(
+            $_[0],
+            XFD::Axis::descendant_or_self->new,
+            XFD::NodeType::node->new,
+        );
+        $op->set_next( $step );
+        $step->set_next( $_[2] );
+        $op;
+    };
 
 relative_location_path :
-  step
-  | relative_location_path SLASH step       { $_[1]->set_next( $_[3] ) ; $_[1] }
-  | relative_location_path SLASH_SLASH step {
-      ## relative_location_path/descendant-or-self::node()/step
-      my $step = XFD::step->new(
-          $_[0],
-          "descendant-or-self",
-          XFD::node_type->new( $_[0], "node" ),
-          undef, ## predicates.
-      );
-      $_[1]->set_next( $step );
-      $step->set_next( $_[3] );
-      $_[1];
-  }
-  ;
+    step
+    | relative_location_path SLASH step    { $_[1]->set_next( $_[3] ) ; $_[1] }
+    ## This next rule means that the grammar does not like "////" :(.
+    ## TODO: add a rule for successive "//" paths
+    | relative_location_path SLASH_SLASH step {
+        my $step = _step(
+            $_[0],
+            XFD::Axis::descendant_or_self->new,
+            XFD::NodeType::node->new,
+        );
+        $_[1]->set_next( $step );
+        $step->set_next( $_[3] );
+        $_[1];
+    }
+    ;
 
 step :
-  axis node_test predicates       { XFD::step->new( @_ ) }
-  | DOT {
-      ## /self::node()
-      XFD::step->new(
-        $_[0],
-        "self",
-        XFD::node_type->new(
-            $_[0],
-            "node"
-        ),
-        undef
-    );
-  }
-  | DOT_DOT { _no @_; }
-  ;
+    axis node_test predicates       { _step( @_ ) }
+    | DOT                           { XFD::self_node->new }
+    | DOT_DOT { _no @_; }
+    ;
 
 axis:
-  /* empty */
-  | AXIS_NAME COLON_COLON
-  | AT { _no @_; }
-  ;
+    /* empty */                 { XFD::Axis::child->new     }
+    | AXIS_NAME COLON_COLON     { XFD::axis( $_[1] )        }
+    | AT                        { XFD::Axis::attribute->new }
+    ;
 
 predicates :
-  /* empty */
-  | predicates LSQB expr RSQB { _no @_; }
-  ;
+    /* empty */
+    | predicates LSQB expr RSQB {
+        my $p = XFD::predicate->new( $_[3] );
+        if ( defined $_[1] ) {
+            $_[1]->set_next( $p );
+            return $_[1];
+        }
+        return $p;
+    }
+    ;
 
 primary_expr :
-  DOLLAR_QNAME { _no @_; }
-  | LPAR expr RPAR { _no @_; }
-  | LITERAL { _no @_; }
-  | NUMBER { _no @_; }
-  | function_call { _no @_; }
-  ;
+    DOLLAR_QNAME     { XFD::get_var $_[1] }
+    | LPAR expr RPAR { XFD::parens $_[2] }
+    | LITERAL
+    | NUMBER
+    | function_call ## provisional
+    ;
 
 function_call :
-  FUNCTION_NAME LPAR opt_args RPAR { _no @_; }
-  ;
+    FUNCTION_NAME LPAR opt_args RPAR { XFD::function( @_[1,3] ) }
+    ;
 
 opt_args :
-  /* empty */ { _no @_; }
-  | args { _no @_; }
-  ;
+    /* empty */             { [] }
+    | args                  ## pass thru
+    ;
 
 args :
-  expr { _no @_; }
-  | args COMMA expr { _no @_; }
-  ;
+    expr              {
+        [ $_[1] ];
+    }
+    | args COMMA expr {
+        push @{$_[1]}, $_[3];
+        $_[1];
+    }
+    ;
   
 node_test :
-  QNAME
-  | STAR
-  | NAME_COLON_STAR { _no @_; }
-  | PI LPAR opt_literal RPAR { _no @_; }
-  | COMMENT LPAR RPAR { _no @_; }
-  | TEXT LPAR RPAR { _no @_; }
-  | NODE LPAR RPAR            { XFD::node_type->new( $_[0], $_[1] ) }
-  ;
+    QNAME                           { XFD::node_name->new( $_[1] ) }
+    | STAR                          { XFD::any_node_name->new; }
+    | NAME_COLON_STAR { _no @_; }
+    | PI LPAR opt_literal RPAR      { XFD::NodeType::processing_instruction
+                                                           ->new( $_[0] ) }
+    | COMMENT LPAR RPAR             { XFD::NodeType::comment->new( $_[0] ) }
+    | TEXT LPAR RPAR                { XFD::NodeType::text   ->new( $_[0] ) }
+    | NODE LPAR RPAR                { XFD::NodeType::node   ->new( $_[0] ) }
+    ;
 
 opt_literal :
-  /* empty */
-  | LITERAL { _no @_; }
-  ;
+    /* empty */
+    | LITERAL { _no @_; }
+    ;
 
 %%
 
@@ -288,10 +366,16 @@ my %tokens = (qw(
     +           PLUS
     -           MINUS
     =           EQUALS
+    !=          BANG_EQUALS
     >           GT
     <           LT
     >=          GTE
     <=          LTE
+
+    ==          EQUALS_EQUALS
+    ||          VBAR_VBAR
+    &&          AMP_AMP
+    &           AMP
 ),
     "," =>      "COMMA"
 );
@@ -339,6 +423,8 @@ my %preceding_tokens = map { ( $_ => undef ) } ( qw(
     and or mod div
     *
     / // | + - = != < <= > >=
+
+    == & && ||
     ),
     "(", ","
 ) ;
@@ -381,7 +467,6 @@ sub lex {
     }
 
     ## NOTE: \s is only an approximation for ExprWhitespace
-
     unless ( defined $token ) {
         $$input =~ m{\G\s*(?:
             ## If the character following an NCName (possibly after
@@ -399,8 +484,8 @@ sub lex {
             |($NCName:\*)                           #NAME_COLON_STAR
             |((?:$NCName:)?$NCName)                 #QNAME
             |('[^']*'|"[^"]*")                      #LITERAL
-            |(\d+(?:\.\d+)?|\.\d+)                  #NUMBER
-            |(\$(?:$NCName:)?$NCName)               #DOLLAR_QNAME
+            |(-?\d+(?:\.\d+)?|\.\d+)                #NUMBER
+            |\$((?:$NCName:)?$NCName)               #DOLLAR_QNAME
             |($simple_tokens)
         )\s*}gcx;
 
@@ -420,13 +505,31 @@ sub lex {
             ) :
             defined  $3 ? ( NAME_COLON_STAR  =>  $3 ) :
             defined  $4 ? ( QNAME            =>  $4 ) :
-            defined  $5 ? ( LITERAL          =>  $5 ) :
-            defined  $6 ? ( NUMBER           =>  $6 ) :
+            defined  $5 ? ( LITERAL          =>  do {
+                    my $s = substr( $5, 1, -1 );
+                    $s =~ s/([\\'])/\\$1/g;
+                    bless \"'$s'", "string constant";
+                }
+            ) :
+            defined  $6 ? ( NUMBER           =>  bless \"$6", "number constant" ) :
             defined  $7 ? ( DOLLAR_QNAME     =>  $7 ) :
-            defined  $8 ? ( $tokens{ $8}     =>  $8 ) :
+            defined  $8 ? ( $tokens{$8}      =>  $8 ) :
             die "Failed to parse '$$input' at ",
                 pos $$input,
                 "\n";
+
+        ## the parser needs to know whether an path expression is being
+        ## parsed in a predicate or not so it can deal with paths
+        ## using immediate code in predicates instead of converting them
+        ## to incremental code run as precursors.
+        if ( $p->{USER}->{ExitedPredicate} ) {
+            --$XFD::predicate_depth;
+        }
+        $p->{USER}->{ExitedPredicate} = $token eq "RSQB";
+
+        if ( $token eq "LSQB" ) {
+            ++$XFD::predicate_depth;
+        }
     }
 
     $d->{LastToken} = $val;
@@ -453,23 +556,68 @@ sub error {
 
 sub parse {
     my $self = shift;
-    my ( $xpath, $options ) = @_;
+    my ( $xpath, $action_code, $options ) = @_;
+
+    $XFD::has_start_or_end = 0;
 
     my $p = XML::Filter::Dispatcher::Parser->new(
         yylex   => \&lex,
         yyerror => \&error,
-        $options->{Debug}
+        ( $options->{Debug} || 0 ) > 5
             ? ( yydebug => 0x1D )
             : (),
     );
+
+    local $XFD::fold_constants =
+        defined $options->{FoldConstants}
+            ? $options->{FoldConstants}
+            : 1;
+
+    local $XFD::self_curriers = 0;
+    local $XFD::rule_number   = $options->{RuleNumber};
+    local $XFD::predicate_depth = 0;
+
     %{$p->{USER}} = %$options if $options;
+    $p->{USER}->{ExitedPredicate} = 0;
     $p->{USER}->{Input} = $xpath;
     my $r = $p->YYParse;
 
-    croak join "\n", @{$p->{USER}->{NONONO}}
+    if ( $p->{USER}->{ExitedPredicate} ) {
+        --$XFD::predicate_depth;
+        $p->{USER}->{ExitedPredicate} = 0;
+    }
+
+    die map "$_\n", @{$p->{USER}->{NONONO}}
         if $p->{USER}->{NONONO} ;
 
-    return $r;
+    return undef unless defined $r;
+
+    die "grammar returned '$r', needed a ref\n"
+        unless ref $r;
+
+    die "predicate_depth not zero: $XFD::predicate_depth"
+        if $XFD::predicate_depth;
+
+    package XFD;
+    if ( $r->isa( "XFD::PathTest" ) ) {
+        ## It's a relative location path, so 
+        ## convert it to code as-is.
+        $r = _rel2abs( $r )->as_incr_code( action \$action_code );
+    }
+    else {
+        ## It's not a location path opcode, it's an expression,
+        ## so make it get evaluated for every node 
+        $r = ${ expr_eval $r, action \$action_code };
+        $r = ${ all_nodes_or_self \$r }
+            unless @XFD::precursors;
+    }
+
+    return () unless defined $r && length $r;
+
+    ## Ok, looks like we have an expression that might be true sometimes,
+    ## assemble it and any precursors in to a list of test subs.
+    return XFD::expression_as_incr_code $r;
+
 }
 
 1 ;

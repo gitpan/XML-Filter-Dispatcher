@@ -26,7 +26,7 @@ sub {
 
 sub {
     my $ast = XML::Filter::Dispatcher::Parser->parse(
-        "/descendant-or-self::node()"
+        "/descendant-or-self::node()",
     ) ;
     ok 1;
 },

@@ -4,8 +4,12 @@ Makefile.PL
 lib/XML/Filter/Dispatcher.pm
 lib/XML/Filter/Dispatcher/Ops.pm
 lib/XML/Filter/Dispatcher/Parser.pm
-t/disp.t
-t/lex.t
+t/examples.t
+t/filter.t
+t/localparser.t
 t/parse.t
+t/vars.t
+t/xpath.t
+t/xpathnot.t
 viz
 xfdxpath.yp
