@@ -1,5 +1,9 @@
 - test "as_hash( /a/[b] )"
 
+- get a[b[c[d]]] working
+
+- test "foo/end::bar" and "ns:foo/end::ns:bar"
+
 - optimize the event queueing; we're keeping more events than we need to.
 
 - There's a cheat in self_node::immed_code_template that returns the

@@ -1,6 +1,6 @@
 ####################################################################
 #
-#    This file was generated using Parse::Yapp version 1.02.
+#    This file was generated using Parse::Yapp version 1.05.
 #
 #        Don't edit this file, use source file instead.
 #
@@ -25,7 +25,7 @@ use strict;
 #
 # This notice should remain unchanged.
 #
-# (c) Copyright 1998-1999 Francois Desarmenien, all rights reserved.
+# (c) Copyright 1998-2001 Francois Desarmenien, all rights reserved.
 # (see the pod text in Parse::Yapp module for use and distribution rights)
 #
 
@@ -37,7 +37,7 @@ use strict;
 
 use vars qw ( $VERSION $COMPATIBLE $FILENAME );
 
-$VERSION = '1.02';
+$VERSION = '1.05';
 $COMPATIBLE = '0.07';
 $FILENAME=__FILE__;
 
@@ -539,1274 +539,1274 @@ sub new {
         ref($class)
     and $class=ref($class);
 
-    my($self)=$class->SUPER::new( yyversion => '1.02',
+    my($self)=$class->SUPER::new( yyversion => '1.05',
                                   yystates =>
 [
 	{#State 0
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
 			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
-			'and_expr' => 18,
-			'absolute_location_path' => 3,
-			'or_expr' => 20,
-			'equality_expr' => 6,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'expr' => 13,
-			'additive_expr' => 22,
-			'location_path' => 14,
-			'unary_expr' => 23,
-			'primary_expr' => 24,
-			'union_expr' => 25,
-			'relational_expr' => 28,
-			'multiplicative_expr' => 27
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'relational_expr' => 16,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'or_expr' => 18,
+			'and_expr' => 9,
+			'unary_expr' => 21,
+			'equality_expr' => 10,
+			'path_expr' => 25,
+			'expr' => 24,
+			'additive_expr' => 12,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 1
-		DEFAULT => -44
-	},
-	{#State 2
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'DOT' => 17,
-			'AT' => 7,
-			'AXIS_NAME' => 26
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'step' => 12,
-			'relative_location_path' => 29,
-			'axis' => 10
-		}
-	},
-	{#State 3
-		DEFAULT => -35
-	},
-	{#State 4
-		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
-			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'absolute_location_path' => 3,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 30,
-			'union_expr' => 25
-		}
-	},
-	{#State 5
-		ACTIONS => {
-			'SLASH_SLASH' => 31,
-			'SLASH' => 32
-		},
-		DEFAULT => -34
-	},
-	{#State 6
-		ACTIONS => {
-			'BANG_EQUALS' => 35,
-			'EQUALS_EQUALS' => 34,
-			'EQUALS' => 33
-		},
-		DEFAULT => -5
-	},
-	{#State 7
-		DEFAULT => -47
-	},
-	{#State 8
-		DEFAULT => -52
-	},
-	{#State 9
-		DEFAULT => -27
-	},
-	{#State 10
-		ACTIONS => {
-			'TEXT' => 38,
-			'NAME_COLON_STAR' => 36,
-			'QNAME' => 40,
-			'STAR' => 42,
-			'PI' => 41,
-			'COMMENT' => 37,
-			'NODE' => 39
-		},
-		GOTOS => {
-			'node_test' => 43
-		}
-	},
-	{#State 11
-		ACTIONS => {
-			'NAME_COLON_STAR' => -45,
-			'AT' => 7,
-			'COMMENT' => -45,
-			'DOT' => 17,
-			'STAR' => -45,
-			'AXIS_NAME' => 26,
-			'DOT_DOT' => 1,
-			'TEXT' => -45,
-			'NODE' => -45,
-			'QNAME' => -45,
-			'PI' => -45
-		},
-		DEFAULT => -36,
-		GOTOS => {
-			'step' => 12,
-			'relative_location_path' => 44,
-			'axis' => 10
-		}
-	},
-	{#State 12
-		DEFAULT => -39
-	},
-	{#State 13
-		ACTIONS => {
-			'' => 45
-		}
-	},
-	{#State 14
-		DEFAULT => -29
-	},
-	{#State 15
-		DEFAULT => -53
-	},
-	{#State 16
-		ACTIONS => {
-			'LPAR' => 46
-		}
-	},
-	{#State 17
-		DEFAULT => -43
-	},
-	{#State 18
-		ACTIONS => {
-			'AMP_AMP' => 47,
-			'AMP' => 48,
-			'AND' => 49
-		},
-		DEFAULT => -2
-	},
-	{#State 19
-		DEFAULT => -50
-	},
-	{#State 20
-		ACTIONS => {
-			'VBAR_VBAR' => 50,
-			'OR' => 51
-		},
-		DEFAULT => -1
-	},
-	{#State 21
-		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
-			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'and_expr' => 18,
-			'absolute_location_path' => 3,
-			'or_expr' => 20,
-			'equality_expr' => 6,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'expr' => 52,
-			'additive_expr' => 22,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'relational_expr' => 28,
-			'multiplicative_expr' => 27
-		}
-	},
-	{#State 22
-		ACTIONS => {
-			'MINUS' => 53,
-			'PLUS' => 54
-		},
-		DEFAULT => -13
-	},
-	{#State 23
-		DEFAULT => -21
-	},
-	{#State 24
-		DEFAULT => -48,
-		GOTOS => {
-			'predicates' => 55
-		}
-	},
-	{#State 25
-		ACTIONS => {
-			'VBAR' => 56
+			'VBAR' => 29
 		},
 		DEFAULT => -25
 	},
+	{#State 2
+		DEFAULT => -53
+	},
+	{#State 3
+		ACTIONS => {
+			'SLASH' => 30,
+			'SLASH_SLASH' => 31
+		},
+		DEFAULT => -34
+	},
+	{#State 4
+		DEFAULT => -48,
+		GOTOS => {
+			'predicates' => 32
+		}
+	},
+	{#State 5
+		DEFAULT => -50
+	},
+	{#State 6
+		ACTIONS => {
+			'COLON_COLON' => 33
+		}
+	},
+	{#State 7
+		DEFAULT => -44
+	},
+	{#State 8
+		DEFAULT => -43
+	},
+	{#State 9
+		ACTIONS => {
+			'AND' => 34,
+			'AMP' => 35,
+			'AMP_AMP' => 36
+		},
+		DEFAULT => -2
+	},
+	{#State 10
+		ACTIONS => {
+			'EQUALS' => 37,
+			'BANG_EQUALS' => 39,
+			'EQUALS_EQUALS' => 38
+		},
+		DEFAULT => -5
+	},
+	{#State 11
+		ACTIONS => {
+			'AXIS_NAME' => 6,
+			'STAR' => -45,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'PI' => -45,
+			'TEXT' => -45,
+			'COMMENT' => -45,
+			'NAME_COLON_STAR' => -45,
+			'QNAME' => -45,
+			'AT' => 23,
+			'NODE' => -45
+		},
+		DEFAULT => -36,
+		GOTOS => {
+			'relative_location_path' => 40,
+			'axis' => 27,
+			'step' => 15
+		}
+	},
+	{#State 12
+		ACTIONS => {
+			'PLUS' => 41,
+			'MINUS' => 42
+		},
+		DEFAULT => -13
+	},
+	{#State 13
+		DEFAULT => -29
+	},
+	{#State 14
+		ACTIONS => {
+			'LPAR' => 43
+		}
+	},
+	{#State 15
+		DEFAULT => -39
+	},
+	{#State 16
+		ACTIONS => {
+			'LT' => 46,
+			'GT' => 44,
+			'LTE' => 47,
+			'GTE' => 45
+		},
+		DEFAULT => -9
+	},
+	{#State 17
+		ACTIONS => {
+			'MULTIPLY' => 48,
+			'MOD' => 49,
+			'DIV' => 50
+		},
+		DEFAULT => -18
+	},
+	{#State 18
+		ACTIONS => {
+			'VBAR_VBAR' => 51,
+			'OR' => 52
+		},
+		DEFAULT => -1
+	},
+	{#State 19
+		DEFAULT => -52
+	},
+	{#State 20
+		ACTIONS => {
+			'AXIS_NAME' => 6,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'AT' => 23
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'relative_location_path' => 53,
+			'axis' => 27,
+			'step' => 15
+		}
+	},
+	{#State 21
+		DEFAULT => -21
+	},
+	{#State 22
+		ACTIONS => {
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'primary_expr' => 4,
+			'unary_expr' => 54,
+			'path_expr' => 25,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
+		}
+	},
+	{#State 23
+		DEFAULT => -47
+	},
+	{#State 24
+		ACTIONS => {
+			'' => 55
+		}
+	},
+	{#State 25
+		DEFAULT => -27
+	},
 	{#State 26
 		ACTIONS => {
-			'COLON_COLON' => 57
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'relational_expr' => 16,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'or_expr' => 18,
+			'and_expr' => 9,
+			'unary_expr' => 21,
+			'equality_expr' => 10,
+			'expr' => 56,
+			'path_expr' => 25,
+			'additive_expr' => 12,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 27
 		ACTIONS => {
-			'MULTIPLY' => 58,
-			'MOD' => 59,
-			'DIV' => 60
+			'QNAME' => 63,
+			'NODE' => 64,
+			'COMMENT' => 61,
+			'PI' => 60,
+			'TEXT' => 59,
+			'STAR' => 58,
+			'NAME_COLON_STAR' => 62
 		},
-		DEFAULT => -18
+		GOTOS => {
+			'node_test' => 57
+		}
 	},
 	{#State 28
-		ACTIONS => {
-			'LTE' => 63,
-			'LT' => 64,
-			'GTE' => 61,
-			'GT' => 62
-		},
-		DEFAULT => -9
+		DEFAULT => -35
 	},
 	{#State 29
 		ACTIONS => {
-			'SLASH_SLASH' => 31,
-			'SLASH' => 32
-		},
-		DEFAULT => -38
-	},
-	{#State 30
-		DEFAULT => -26
-	},
-	{#State 31
-		ACTIONS => {
-			'DOT_DOT' => 1,
-			'DOT' => 17,
-			'AT' => 7,
-			'AXIS_NAME' => 26
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
-			'step' => 65,
-			'axis' => 10
+			'relative_location_path' => 3,
+			'path_expr' => 65,
+			'primary_expr' => 4,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
+		}
+	},
+	{#State 30
+		ACTIONS => {
+			'AXIS_NAME' => 6,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'AT' => 23
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'axis' => 27,
+			'step' => 66
+		}
+	},
+	{#State 31
+		ACTIONS => {
+			'AXIS_NAME' => 6,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'AT' => 23
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'axis' => 27,
+			'step' => 67
 		}
 	},
 	{#State 32
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'DOT' => 17,
-			'AT' => 7,
-			'AXIS_NAME' => 26
+			'SLASH' => 68,
+			'SLASH_SLASH' => 70,
+			'LSQB' => 71
 		},
-		DEFAULT => -45,
+		DEFAULT => -31,
 		GOTOS => {
-			'step' => 66,
-			'axis' => 10
+			'segment' => 69
 		}
 	},
 	{#State 33
-		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
-			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'absolute_location_path' => 3,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'additive_expr' => 22,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'relational_expr' => 67,
-			'multiplicative_expr' => 27
-		}
+		DEFAULT => -46
 	},
 	{#State 34
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
 			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
-			'absolute_location_path' => 3,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'additive_expr' => 22,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'relational_expr' => 68,
-			'multiplicative_expr' => 27
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'relational_expr' => 16,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
+			'equality_expr' => 72,
+			'path_expr' => 25,
+			'additive_expr' => 12,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 35
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
 			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
-			'absolute_location_path' => 3,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'additive_expr' => 22,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'relational_expr' => 69,
-			'multiplicative_expr' => 27
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'relational_expr' => 16,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
+			'equality_expr' => 73,
+			'path_expr' => 25,
+			'additive_expr' => 12,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 36
-		DEFAULT => -61
+		ACTIONS => {
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'relational_expr' => 16,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
+			'equality_expr' => 74,
+			'path_expr' => 25,
+			'additive_expr' => 12,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
+		}
 	},
 	{#State 37
 		ACTIONS => {
-			'LPAR' => 70
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'relational_expr' => 75,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
+			'path_expr' => 25,
+			'additive_expr' => 12,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 38
 		ACTIONS => {
-			'LPAR' => 71
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'relational_expr' => 76,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
+			'path_expr' => 25,
+			'additive_expr' => 12,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 39
 		ACTIONS => {
-			'LPAR' => 72
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'relational_expr' => 77,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
+			'path_expr' => 25,
+			'additive_expr' => 12,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 40
-		DEFAULT => -59
+		ACTIONS => {
+			'SLASH' => 30,
+			'SLASH_SLASH' => 31
+		},
+		DEFAULT => -37
 	},
 	{#State 41
 		ACTIONS => {
-			'LPAR' => 73
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 78,
+			'unary_expr' => 21,
+			'path_expr' => 25,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 42
-		DEFAULT => -60
+		ACTIONS => {
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 79,
+			'unary_expr' => 21,
+			'path_expr' => 25,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
+		}
 	},
 	{#State 43
-		DEFAULT => -48,
+		ACTIONS => {
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'RPAR' => -55,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
+		},
+		DEFAULT => -45,
 		GOTOS => {
-			'predicates' => 74
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'primary_expr' => 4,
+			'and_expr' => 9,
+			'args' => 80,
+			'equality_expr' => 10,
+			'additive_expr' => 12,
+			'location_path' => 13,
+			'step' => 15,
+			'opt_args' => 81,
+			'relational_expr' => 16,
+			'multiplicative_expr' => 17,
+			'or_expr' => 18,
+			'unary_expr' => 21,
+			'expr' => 82,
+			'path_expr' => 25,
+			'absolute_location_path' => 28,
+			'axis' => 27
 		}
 	},
 	{#State 44
 		ACTIONS => {
-			'SLASH_SLASH' => 31,
-			'SLASH' => 32
-		},
-		DEFAULT => -37
-	},
-	{#State 45
-		DEFAULT => 0
-	},
-	{#State 46
-		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
 			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26,
-			'RPAR' => -55
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
-			'and_expr' => 18,
-			'absolute_location_path' => 3,
-			'or_expr' => 20,
-			'equality_expr' => 6,
-			'relative_location_path' => 5,
-			'args' => 75,
-			'opt_args' => 77,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'expr' => 76,
-			'additive_expr' => 22,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'relational_expr' => 28,
-			'multiplicative_expr' => 27
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
+			'additive_expr' => 83,
+			'path_expr' => 25,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
+		}
+	},
+	{#State 45
+		ACTIONS => {
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
+			'additive_expr' => 84,
+			'path_expr' => 25,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
+		}
+	},
+	{#State 46
+		ACTIONS => {
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
+			'additive_expr' => 85,
+			'path_expr' => 25,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 47
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
 			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
-			'absolute_location_path' => 3,
-			'equality_expr' => 78,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'additive_expr' => 22,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'relational_expr' => 28,
-			'multiplicative_expr' => 27
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'unary_expr' => 21,
+			'additive_expr' => 86,
+			'path_expr' => 25,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 48
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
 			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
-			'absolute_location_path' => 3,
-			'equality_expr' => 79,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'additive_expr' => 22,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'relational_expr' => 28,
-			'multiplicative_expr' => 27
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'primary_expr' => 4,
+			'unary_expr' => 87,
+			'path_expr' => 25,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 49
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
 			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
-			'absolute_location_path' => 3,
-			'equality_expr' => 80,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'additive_expr' => 22,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'relational_expr' => 28,
-			'multiplicative_expr' => 27
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'primary_expr' => 4,
+			'unary_expr' => 88,
+			'path_expr' => 25,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 50
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
 			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
-			'and_expr' => 81,
-			'absolute_location_path' => 3,
-			'equality_expr' => 6,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'additive_expr' => 22,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'relational_expr' => 28,
-			'multiplicative_expr' => 27
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'primary_expr' => 4,
+			'unary_expr' => 89,
+			'path_expr' => 25,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 51
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
 			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
 		},
 		DEFAULT => -45,
 		GOTOS => {
-			'and_expr' => 82,
-			'absolute_location_path' => 3,
-			'equality_expr' => 6,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'additive_expr' => 22,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'relational_expr' => 28,
-			'multiplicative_expr' => 27
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'relational_expr' => 16,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'and_expr' => 90,
+			'unary_expr' => 21,
+			'equality_expr' => 10,
+			'path_expr' => 25,
+			'additive_expr' => 12,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 52
 		ACTIONS => {
-			'RPAR' => 83
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'relational_expr' => 16,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'and_expr' => 91,
+			'unary_expr' => 21,
+			'equality_expr' => 10,
+			'path_expr' => 25,
+			'additive_expr' => 12,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 53
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
-			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
+			'SLASH' => 30,
+			'SLASH_SLASH' => 31
 		},
-		DEFAULT => -45,
-		GOTOS => {
-			'absolute_location_path' => 3,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'multiplicative_expr' => 84
-		}
+		DEFAULT => -38
 	},
 	{#State 54
-		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
-			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'absolute_location_path' => 3,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'multiplicative_expr' => 85
-		}
+		DEFAULT => -26
 	},
 	{#State 55
-		ACTIONS => {
-			'SLASH_SLASH' => 86,
-			'SLASH' => 88,
-			'LSQB' => 89
-		},
-		DEFAULT => -31,
-		GOTOS => {
-			'segment' => 87
-		}
+		DEFAULT => -0
 	},
 	{#State 56
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
-			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'step' => 12,
-			'absolute_location_path' => 3,
-			'primary_expr' => 24,
-			'location_path' => 14,
-			'relative_location_path' => 5,
-			'path_expr' => 90,
-			'axis' => 10
+			'RPAR' => 92
 		}
 	},
 	{#State 57
-		DEFAULT => -46
+		DEFAULT => -48,
+		GOTOS => {
+			'predicates' => 93
+		}
 	},
 	{#State 58
-		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
-			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'absolute_location_path' => 3,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 91,
-			'union_expr' => 25
-		}
+		DEFAULT => -60
 	},
 	{#State 59
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
-			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'absolute_location_path' => 3,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 92,
-			'union_expr' => 25
+			'LPAR' => 94
 		}
 	},
 	{#State 60
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
-			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'absolute_location_path' => 3,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 93,
-			'union_expr' => 25
+			'LPAR' => 95
 		}
 	},
 	{#State 61
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
-			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'absolute_location_path' => 3,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'additive_expr' => 94,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'multiplicative_expr' => 27
+			'LPAR' => 96
 		}
 	},
 	{#State 62
-		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
-			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'absolute_location_path' => 3,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'additive_expr' => 95,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'multiplicative_expr' => 27
-		}
+		DEFAULT => -61
 	},
 	{#State 63
-		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
-			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'absolute_location_path' => 3,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'additive_expr' => 96,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'multiplicative_expr' => 27
-		}
+		DEFAULT => -59
 	},
 	{#State 64
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
-			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'absolute_location_path' => 3,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'additive_expr' => 97,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'multiplicative_expr' => 27
+			'LPAR' => 97
 		}
 	},
 	{#State 65
-		DEFAULT => -41
+		DEFAULT => -28
 	},
 	{#State 66
 		DEFAULT => -40
 	},
 	{#State 67
-		ACTIONS => {
-			'LTE' => 63,
-			'LT' => 64,
-			'GTE' => 61,
-			'GT' => 62
-		},
-		DEFAULT => -10
+		DEFAULT => -41
 	},
 	{#State 68
 		ACTIONS => {
-			'LTE' => 63,
-			'LT' => 64,
-			'GTE' => 61,
-			'GT' => 62
+			'AXIS_NAME' => 6,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'AT' => 23
 		},
-		DEFAULT => -12
+		DEFAULT => -45,
+		GOTOS => {
+			'relative_location_path' => 98,
+			'axis' => 27,
+			'step' => 15
+		}
 	},
 	{#State 69
-		ACTIONS => {
-			'LTE' => 63,
-			'LT' => 64,
-			'GTE' => 61,
-			'GT' => 62
-		},
-		DEFAULT => -11
+		DEFAULT => -30
 	},
 	{#State 70
 		ACTIONS => {
-			'RPAR' => 98
+			'AXIS_NAME' => 6,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'AT' => 23
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'relative_location_path' => 99,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 71
 		ACTIONS => {
-			'RPAR' => 99
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'relational_expr' => 16,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'or_expr' => 18,
+			'and_expr' => 9,
+			'unary_expr' => 21,
+			'equality_expr' => 10,
+			'expr' => 100,
+			'path_expr' => 25,
+			'additive_expr' => 12,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
 		}
 	},
 	{#State 72
 		ACTIONS => {
-			'RPAR' => 100
-		}
-	},
-	{#State 73
-		ACTIONS => {
-			'LITERAL' => 101
-		},
-		DEFAULT => -66,
-		GOTOS => {
-			'opt_literal' => 102
-		}
-	},
-	{#State 74
-		ACTIONS => {
-			'LSQB' => 89
-		},
-		DEFAULT => -42
-	},
-	{#State 75
-		ACTIONS => {
-			'COMMA' => 103
-		},
-		DEFAULT => -56
-	},
-	{#State 76
-		DEFAULT => -57
-	},
-	{#State 77
-		ACTIONS => {
-			'RPAR' => 104
-		}
-	},
-	{#State 78
-		ACTIONS => {
-			'BANG_EQUALS' => 35,
-			'EQUALS_EQUALS' => 34,
-			'EQUALS' => 33
-		},
-		DEFAULT => -7
-	},
-	{#State 79
-		ACTIONS => {
-			'BANG_EQUALS' => 35,
-			'EQUALS_EQUALS' => 34,
-			'EQUALS' => 33
-		},
-		DEFAULT => -8
-	},
-	{#State 80
-		ACTIONS => {
-			'BANG_EQUALS' => 35,
-			'EQUALS_EQUALS' => 34,
-			'EQUALS' => 33
+			'EQUALS' => 37,
+			'BANG_EQUALS' => 39,
+			'EQUALS_EQUALS' => 38
 		},
 		DEFAULT => -6
 	},
-	{#State 81
+	{#State 73
 		ACTIONS => {
-			'AMP_AMP' => 47,
-			'AMP' => 48,
-			'AND' => 49
+			'EQUALS' => 37,
+			'BANG_EQUALS' => 39,
+			'EQUALS_EQUALS' => 38
 		},
-		DEFAULT => -4
+		DEFAULT => -8
 	},
-	{#State 82
+	{#State 74
 		ACTIONS => {
-			'AMP_AMP' => 47,
-			'AMP' => 48,
-			'AND' => 49
+			'EQUALS' => 37,
+			'BANG_EQUALS' => 39,
+			'EQUALS_EQUALS' => 38
 		},
-		DEFAULT => -3
+		DEFAULT => -7
 	},
-	{#State 83
-		DEFAULT => -51
-	},
-	{#State 84
+	{#State 75
 		ACTIONS => {
-			'MULTIPLY' => 58,
-			'MOD' => 59,
-			'DIV' => 60
+			'LT' => 46,
+			'GT' => 44,
+			'LTE' => 47,
+			'GTE' => 45
 		},
-		DEFAULT => -20
+		DEFAULT => -10
 	},
-	{#State 85
+	{#State 76
 		ACTIONS => {
-			'MULTIPLY' => 58,
-			'MOD' => 59,
-			'DIV' => 60
+			'LT' => 46,
+			'GT' => 44,
+			'LTE' => 47,
+			'GTE' => 45
+		},
+		DEFAULT => -12
+	},
+	{#State 77
+		ACTIONS => {
+			'LT' => 46,
+			'GT' => 44,
+			'LTE' => 47,
+			'GTE' => 45
+		},
+		DEFAULT => -11
+	},
+	{#State 78
+		ACTIONS => {
+			'MULTIPLY' => 48,
+			'MOD' => 49,
+			'DIV' => 50
 		},
 		DEFAULT => -19
 	},
-	{#State 86
+	{#State 79
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'DOT' => 17,
-			'AT' => 7,
-			'AXIS_NAME' => 26
+			'MULTIPLY' => 48,
+			'MOD' => 49,
+			'DIV' => 50
 		},
-		DEFAULT => -45,
-		GOTOS => {
-			'step' => 12,
-			'relative_location_path' => 105,
-			'axis' => 10
+		DEFAULT => -20
+	},
+	{#State 80
+		ACTIONS => {
+			'COMMA' => 101
+		},
+		DEFAULT => -56
+	},
+	{#State 81
+		ACTIONS => {
+			'RPAR' => 102
 		}
 	},
-	{#State 87
-		DEFAULT => -30
+	{#State 82
+		DEFAULT => -57
 	},
-	{#State 88
+	{#State 83
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'DOT' => 17,
-			'AT' => 7,
-			'AXIS_NAME' => 26
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'step' => 12,
-			'relative_location_path' => 106,
-			'axis' => 10
-		}
-	},
-	{#State 89
-		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
-			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
-		},
-		DEFAULT => -45,
-		GOTOS => {
-			'and_expr' => 18,
-			'absolute_location_path' => 3,
-			'or_expr' => 20,
-			'equality_expr' => 6,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'expr' => 107,
-			'additive_expr' => 22,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'relational_expr' => 28,
-			'multiplicative_expr' => 27
-		}
-	},
-	{#State 90
-		DEFAULT => -28
-	},
-	{#State 91
-		DEFAULT => -22
-	},
-	{#State 92
-		DEFAULT => -24
-	},
-	{#State 93
-		DEFAULT => -23
-	},
-	{#State 94
-		ACTIONS => {
-			'MINUS' => 53,
-			'PLUS' => 54
-		},
-		DEFAULT => -17
-	},
-	{#State 95
-		ACTIONS => {
-			'MINUS' => 53,
-			'PLUS' => 54
+			'PLUS' => 41,
+			'MINUS' => 42
 		},
 		DEFAULT => -15
 	},
-	{#State 96
+	{#State 84
 		ACTIONS => {
-			'MINUS' => 53,
-			'PLUS' => 54
+			'PLUS' => 41,
+			'MINUS' => 42
 		},
-		DEFAULT => -16
+		DEFAULT => -17
 	},
-	{#State 97
+	{#State 85
 		ACTIONS => {
-			'MINUS' => 53,
-			'PLUS' => 54
+			'PLUS' => 41,
+			'MINUS' => 42
 		},
 		DEFAULT => -14
 	},
-	{#State 98
-		DEFAULT => -63
-	},
-	{#State 99
-		DEFAULT => -64
-	},
-	{#State 100
-		DEFAULT => -65
-	},
-	{#State 101
-		DEFAULT => -67
-	},
-	{#State 102
+	{#State 86
 		ACTIONS => {
-			'RPAR' => 108
+			'PLUS' => 41,
+			'MINUS' => 42
+		},
+		DEFAULT => -16
+	},
+	{#State 87
+		DEFAULT => -22
+	},
+	{#State 88
+		DEFAULT => -24
+	},
+	{#State 89
+		DEFAULT => -23
+	},
+	{#State 90
+		ACTIONS => {
+			'AND' => 34,
+			'AMP' => 35,
+			'AMP_AMP' => 36
+		},
+		DEFAULT => -4
+	},
+	{#State 91
+		ACTIONS => {
+			'AND' => 34,
+			'AMP' => 35,
+			'AMP_AMP' => 36
+		},
+		DEFAULT => -3
+	},
+	{#State 92
+		DEFAULT => -51
+	},
+	{#State 93
+		ACTIONS => {
+			'LSQB' => 71
+		},
+		DEFAULT => -42
+	},
+	{#State 94
+		ACTIONS => {
+			'RPAR' => 103
 		}
 	},
-	{#State 103
+	{#State 95
 		ACTIONS => {
-			'DOT_DOT' => 1,
-			'MINUS' => 4,
-			'SLASH_SLASH' => 2,
-			'AT' => 7,
-			'LITERAL' => 8,
-			'SLASH' => 11,
-			'NUMBER' => 15,
-			'FUNCTION_NAME' => 16,
-			'DOT' => 17,
-			'DOLLAR_QNAME' => 19,
-			'LPAR' => 21,
-			'AXIS_NAME' => 26
+			'LITERAL' => 104
 		},
-		DEFAULT => -45,
+		DEFAULT => -66,
 		GOTOS => {
-			'and_expr' => 18,
-			'absolute_location_path' => 3,
-			'or_expr' => 20,
-			'equality_expr' => 6,
-			'relative_location_path' => 5,
-			'path_expr' => 9,
-			'axis' => 10,
-			'step' => 12,
-			'expr' => 109,
-			'additive_expr' => 22,
-			'location_path' => 14,
-			'primary_expr' => 24,
-			'unary_expr' => 23,
-			'union_expr' => 25,
-			'relational_expr' => 28,
-			'multiplicative_expr' => 27
+			'opt_literal' => 105
 		}
 	},
-	{#State 104
-		DEFAULT => -54
-	},
-	{#State 105
+	{#State 96
 		ACTIONS => {
-			'SLASH_SLASH' => 31,
-			'SLASH' => 32
-		},
-		DEFAULT => -33
+			'RPAR' => 106
+		}
 	},
-	{#State 106
+	{#State 97
 		ACTIONS => {
-			'SLASH_SLASH' => 31,
-			'SLASH' => 32
+			'RPAR' => 107
+		}
+	},
+	{#State 98
+		ACTIONS => {
+			'SLASH' => 30,
+			'SLASH_SLASH' => 31
 		},
 		DEFAULT => -32
 	},
-	{#State 107
+	{#State 99
 		ACTIONS => {
-			'RSQB' => 110
+			'SLASH' => 30,
+			'SLASH_SLASH' => 31
+		},
+		DEFAULT => -33
+	},
+	{#State 100
+		ACTIONS => {
+			'RSQB' => 108
 		}
 	},
+	{#State 101
+		ACTIONS => {
+			'NUMBER' => 2,
+			'AXIS_NAME' => 6,
+			'DOLLAR_QNAME' => 5,
+			'DOT' => 8,
+			'DOT_DOT' => 7,
+			'SLASH' => 11,
+			'FUNCTION_NAME' => 14,
+			'LITERAL' => 19,
+			'SLASH_SLASH' => 20,
+			'MINUS' => 22,
+			'AT' => 23,
+			'LPAR' => 26
+		},
+		DEFAULT => -45,
+		GOTOS => {
+			'union_expr' => 1,
+			'relative_location_path' => 3,
+			'relational_expr' => 16,
+			'primary_expr' => 4,
+			'multiplicative_expr' => 17,
+			'or_expr' => 18,
+			'and_expr' => 9,
+			'unary_expr' => 21,
+			'equality_expr' => 10,
+			'expr' => 109,
+			'path_expr' => 25,
+			'additive_expr' => 12,
+			'location_path' => 13,
+			'absolute_location_path' => 28,
+			'axis' => 27,
+			'step' => 15
+		}
+	},
+	{#State 102
+		DEFAULT => -54
+	},
+	{#State 103
+		DEFAULT => -64
+	},
+	{#State 104
+		DEFAULT => -67
+	},
+	{#State 105
+		ACTIONS => {
+			'RPAR' => 110
+		}
+	},
+	{#State 106
+		DEFAULT => -63
+	},
+	{#State 107
+		DEFAULT => -65
+	},
 	{#State 108
-		DEFAULT => -62
+		DEFAULT => -49
 	},
 	{#State 109
 		DEFAULT => -58
 	},
 	{#State 110
-		DEFAULT => -49
+		DEFAULT => -62
 	}
 ],
                                   yyrules  =>

@@ -1,5 +1,10 @@
 CHANGES file for XML::Filter::Dispatcher
 
+0.47 Mon Jan 27 15:21:37 EST 2003
+    - Rebuild with a new (1.05) Parse::Yapp so that X:F:D:Parser is not
+    advertising a 1.02 $VERSION due to the VERSION of Parse::Yapp being
+    inserted at an inopportune place.
+
 0.46 Fri Jan 10 09:13:37 EST 2003
     - Updated SYNOPSIS, it was badly out of date and tripped up
       t@tomacorp.com, as seen on perlmonks (thanks, Matt).
