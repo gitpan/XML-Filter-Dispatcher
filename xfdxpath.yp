@@ -606,13 +606,6 @@ sub parse {
 
     my $op_tree = $self->_parse( @_ );
 
-    if ( ( $XFD::dispatcher->{Debug} || 0 ) > 1 ) {
-        open F, ">foo.png";
-        print F $op_tree->as_graphviz->as_png;
-        close F;
-        system( "ee foo.png" );
-    }
-
     my $rule = XFD::Rule->new( $expr );
     $rule->set_next( $op_tree );
     $XFD::dispatcher->{OpTree}->add( $rule );

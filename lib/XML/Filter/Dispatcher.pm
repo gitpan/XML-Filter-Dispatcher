@@ -1,6 +1,6 @@
 package XML::Filter::Dispatcher ;
 
-$VERSION = 0.41;
+$VERSION = 0.43;
 
 =head1 NAME
 
@@ -138,7 +138,7 @@ EventPath patterns may also extract strings, numbers and boolean values
 from a document.  These are called "expression patterns" and are only
 said to match when the values they extract are "true" according to XPath
 semantics (XPath truth-ness differs from Perl truth-ness, see
-L<EventPath Truth|EventPath Truth> below).  Expression patterns look
+EventPath Truth below).  Expression patterns look
 like C<string( /a/b/c )> or C<number( part-number )>, and if the result
 is true, the action will be executed and the result can be retrieved
 using the L<xvalue|xvalue> method.
@@ -578,7 +578,7 @@ variable handling.
 
 The general API provides C<new()> and C<xvalue()>.
 The variables API provides C<xset_var()> and C<xget_var()>.  The
-xstack API provides C<xpush()>, C<xpeek()> and C<xpop()>.
+xstack API provides C<xadd()>, C<xset()>, C<xpush()>, C<xpeek()> and C<xpop()>.
 
 All of the "xfoo()" APIs may be called as a method or,
 within rule handlers, called as a function:
@@ -621,7 +621,7 @@ or en mass:
 
 BEGIN {
     my @general_API   = qw( xvalue );
-    my @xstack_API = qw( xpeek xpop xpush xstack_empty );
+    my @xstack_API = qw( xpeek xpop xadd xset xpush xstack_empty );
     my @variables_API = qw( xset_var xget_var );
     @EXPORT_OK = ( @general_API, @variables_API, @xstack_API );
     %EXPORT_TAGS = (
@@ -644,6 +644,9 @@ use XML::Filter::Dispatcher::Parser;
 use XML::SAX::EventMethodMaker qw( compile_missing_methods sax_event_names );
 
 use constant is_tracing => defined $Devel::TraceSAX::VERSION;
+# Devel::TraceSAX does not work under perl5.8.0
+#use constant is_tracing => 1;
+#sub emit_trace_SAX_message { warn @_ };
 
 BEGIN {
     eval( is_tracing
@@ -754,6 +757,13 @@ sub new {
     }
 
     return $self unless @{$self->{OpTree} || []};
+
+    if ( ( $self->{Debug} || 0 ) > 1 ) {
+        open F, ">foo.png";
+        print F $self->{OpTree}->as_graphviz->as_png;
+        close F;
+        system( "ee foo.png" );
+    }
 
     $self->{OpTree}->fixup( {} );
     my $code = $self->{OpTree}->as_incr_code( {
@@ -1052,25 +1062,37 @@ sub get_handler {
 
 =head2 The xstack
 
-The xstack is a stack provided by XML::Filter::Dispatcher that is
-automatically unwound at each C<end_element()> to where it was just before
-the C<start_element()>.  It provides a quick and easy way to build an
-object or object hierarchy.  Here's an example of how to build and
-return a graph:
+The xstack is a stack mechanism provided by XML::Filter::Dispatcher that
+is automatically unwound after end_element, end_document, and all other
+events other than start_element or start_document.  This sounds
+limiting, but it's quite useful for building data structures that mimic
+the structure of the XML input.  I've found this to be common when
+dealing with data structures in XML and a creating nested hierarchies of
+objects and/or Perl data structures.
+
+Here's an example of how to build and return a graph:
+
+    use Graph;
 
     my $d = XML::Filter::Dispatcher->new(
         Rules => [
-            graph  => sub { xpush( Graph->new ); },
-            vertex => sub {
-                xpeek->add_vertex(
-                    $_[1]->{Attributes}->{"{}name"}->{Value}
-                );
-            },
-            edge => sub {
-                xpeek->add_edge(
-                    $_[1]->{Attributes}->{"{}from"}->{Value},
-                    $_[1]->{Attributes}->{"{}to"  }->{Value},
-                );
+            ## These two create and, later, return the Graph object.
+            'graph'        => sub { xpush( Graph->new ) },
+            'end::graph'   => \&xpop,
+
+            ## Every vertex must have a name, so collect in and add it
+            ## to the Graph object using its add_vertex( $name ) method.
+            'vertex'       => [ 'string( @name )' => sub { xadd     } ],
+
+            ## Edges are a little more complex: we need to collect the
+            ## from and to attributes, which we do using a hash, then
+            ## pop the hash and use it to add an edge.  You could
+            ## also use a single rule, see below.
+            'edge'         => [ 'string()'        => sub { xpush {} } ],
+            'edge/@*'      => [ 'string()'        => sub { xset     } ],
+            'end::edge'    => sub { 
+                my $edge = xpop;
+                xpeek->add_edge( @$edge{"from","to"} );
             },
         ],
     );
@@ -1093,6 +1115,17 @@ no child elements, you want to create one class to contain just
 character content, otherwise you want to add a container class to
 contain the child nodes.
 
+An faster alternative to the 3 edge rules relies on the fact that
+SAX's start_element events carry the attributes, so you can actually
+do a single rule instead of the three we show above:
+
+            'edge' => sub {
+                xpeek->add_edge(
+                    $_[1]->{Attributes}->{"{}from"}->{Value},
+                    $_[1]->{Attributes}->{"{}to"  }->{Value},
+                );
+            },
+
 =over
 
 =item xpush
@@ -1111,8 +1144,200 @@ can be used to retrieve them.
 
 sub xpush {
     local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
+    emit_trace_SAX_message "EventPath: xpush()ing ", @_ if is_tracing;
     push @{$XFD::cur_self->{XStack}}, @_;
 }
+
+=item xadd
+
+Tries to add a possibly named item to the element on the top of the
+stack and push the item on to the stack.  It makes a guess about how to
+add items depending on what the current top of the stack is.
+
+    xadd $name, $new_item;
+
+does this:
+
+    Top of Stack    Action
+    ============    ======
+    scalar          xpeek                  .= $new_item;
+    SCALAR ref      ${xpeek}               .= $new_item;
+    ARRAY ref       push @{xpeek()},          $new_item;
+    HASH ref        push @{xpeek->{$name}} =  $new_item;
+    blessed object  xpeek->$method( $new_item );
+
+The $method in the last item is one of (in order) "add_$name",
+"push_$name", or "$name".
+
+After the above action, an
+
+    xpush $new_item;
+
+is done.
+
+$name defaults to the LocalName of the current node if it is an
+attribute or element, so
+
+    xadd $foo;
+
+will DWYM.  TODO: search up the current node's ancestry for a LocalName
+when handling other event types.
+
+If no parameters are provided, xvalue is used.
+
+If the stack is empty, it just xpush()es on the stack.
+
+=cut
+    
+sub xadd {
+    local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
+    my $name = @_ > 1
+        ? shift
+        : do {
+            croak "$XFD::ctx->{EventType} has no LocalName"
+                unless exists $XFD::ctx->{Node}->{LocalName}
+                       && defined exists $XFD::ctx->{Node}->{LocalName};
+            croak "$XFD::ctx->{EventType} a LocalName of ''"
+                unless length $XFD::ctx->{Node}->{LocalName};
+            $XFD::ctx->{Node}->{LocalName};
+        };
+
+    my $new_item = @_ ? shift : $XFD::cur_self->xvalue;
+
+    emit_trace_SAX_message "EventPath: xadd()ing ", $name, " => ", $new_item if is_tracing;
+    local $Devel::TraceCalls::nesting_level = $Devel::TraceCalls::nesting_level + 1 if is_tracing;
+
+    if ( @{$XFD::cur_self->{XStack}} ) {
+        my $top = $XFD::cur_self->xpeek;
+        my $t = ref $top;
+        my $meth;
+
+        if ( $t eq "" ) {
+            $XFD::cur_self->{XStack}->[-1] .= ""; 
+        }
+        elsif ( $t eq "SCALAR" ) {
+            $$top .= ""; 
+        }
+        elsif ( $t eq "ARRAY" ) {
+            push @$top, $new_item;
+        }
+        elsif ( $t eq "HASH" ) {
+            croak
+                "element '",
+                $name,
+                "' of the HASH on top of the xstack is a ",
+                do {
+                    my $t = ref $top->{$name};
+                    ! $t ? "scalar" : "$t reference";
+                },
+                ", not an ARRAY ref"
+                if defined $top->{$name} && ! ref $top->{$name};
+            push @{$top->{$name}}, $new_item;
+        }
+        ## See if it's a blessed object that can add thingamies"
+        elsif ( $meth = ( 
+            UNIVERSAL::can( $top, "add_$name" )
+            || UNIVERSAL::can( $top, "push_$name" )
+            || UNIVERSAL::can( $top, "add" )
+        ) ) {
+            $top->$meth( $new_item );
+        }
+        else {
+            croak "don't know how to xadd a '",
+                ref( $new_item ) || "scalar", 
+                "' ",
+                defined $name ? $name : "item",
+                " to a '$t' (which is what is on the top of the xstack)";
+        }
+    }
+
+    $XFD::cur_self->xpush( $new_item );
+    return $new_item;
+}
+
+
+=item xset
+
+Like xadd, but tries to set a named value.
+
+
+    xset $name, $new_item;
+
+does this:
+
+    Top of Stack    Action
+    ============    ======
+    scalar          xpeek                  = $new_item;
+    SCALAR ref      ${xpeek}               = $new_item;
+    HASH ref        xpeek->{$name}         = $new_item;
+    blessed object  xpeek->$name( $new_item );
+
+Trying to xset any other types results in an exception.
+
+After the above action, an
+
+    xpush $new_item;
+
+is done.
+
+$name defaults to the LocalName of the current node if it is an
+attribute or element, so
+
+    xset $foo;
+
+will DWYM.  TODO: search up the current node's ancestry for a LocalName
+when handling other event types.
+
+If no parameters are provided, xvalue is used.
+
+If the stack is empty, it just xpush()es on the stack.
+
+=cut
+    
+sub xset {
+    local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
+    my $name = @_ > 1
+        ? shift
+        : do {
+            croak "$XFD::ctx->{EventType} has no LocalName"
+                unless exists $XFD::ctx->{Node}->{LocalName}
+                       && defined exists $XFD::ctx->{Node}->{LocalName};
+            croak "$XFD::ctx->{EventType} a LocalName of ''"
+                unless length $XFD::ctx->{Node}->{LocalName};
+            $XFD::ctx->{Node}->{LocalName};
+        };
+
+
+    my $new_item = @_ ? shift : $XFD::cur_self->xvalue;
+    emit_trace_SAX_message "EventPath: xset()ing ", $name, " => ", $new_item if is_tracing;
+    local $Devel::TraceCalls::nesting_level = $Devel::TraceCalls::nesting_level + 1 if is_tracing;
+
+    if ( @{$XFD::cur_self->{XStack}} ) {
+        my $top = $XFD::cur_self->xpeek;
+        my $t = ref $top;
+        my $meth;
+        if ( $t eq "" ) {
+            $XFD::cur_self->{XStack}->[-1] = $new_item; 
+        }
+        elsif ( $t eq "SCALAR" ) {
+            $$top = $new_item; 
+        }
+        elsif ( $t eq "HASH" ) {
+            $top->{$name} = $new_item;
+        }
+        ## See if it's a blessed object that can add thingamies"
+        elsif ( $meth = UNIVERSAL::can( $top, $name ) ) {
+            $top->$meth( $new_item );
+        }
+        else {
+            croak "don't know how to xset a '$t' (which is what is on the top of the xstack)";
+        }
+    }
+    $XFD::cur_self->xpush( $new_item );
+    return $new_item;
+}
+
+
 
 =item xpeek
 
@@ -1191,6 +1416,7 @@ sub xpop {
     croak "xpop() called on empty stack"
         unless @{$XFD::cur_self->{XStack}};
 
+    emit_trace_SAX_message "EventPath: xpop()ing ", $XFD::cur_self->{XStack}->[-1] if is_tracing;
     return pop @{$XFD::cur_self->{XStack}};
 }
 
@@ -1291,7 +1517,11 @@ sub _queue_pending_event {
         )
     ) {
         my $c = shift @{$self->{PendingEvents}};
-        if ( substr( $c->{EventType}, 0, 6 ) eq "start_" ) {
+        if (
+            substr( $c->{EventType}, 0, 4 ) ne "end_"
+#            substr( $c->{EventType}, 0, 6 ) eq "start_"
+#            || $c->{EventType} eq "attribute"
+        ) {
             push @{$self->{XStackMarks}}, scalar @{$self->{XStack}};
         }
 
@@ -1311,8 +1541,17 @@ emit_trace_SAX_message "EventPath: result set to ", defined $self->{LastHandlerR
             emit_trace_SAX_message "EventPath: discarding event ", int $c if is_tracing;
         }
 
-        if ( $c->{EventType} eq "end_element" ) {
-            splice @{$self->{XStack}}, pop(  @{$self->{XStackMarks}} );
+        if (
+#             $c->{EventType} eq "end_element"
+            ## Note that we don't unwind on end_document.  Perhaps we should.
+#            || $c->{EventType} eq "attribute"
+            substr( $c->{EventType}, 0, 6 ) ne "start_"
+        ) {
+            my $level = pop  @{$self->{XStackMarks}};
+            if ( $level < @{$self->{XStack}} ) {
+                emit_trace_SAX_message "EventPath: unwinding from xstack: ", splice @{$self->{XStack}}, $level if is_tracing;
+                splice @{$self->{XStack}}, $level;
+            }
         }
     }
 
@@ -1409,10 +1648,8 @@ sub start_element {
 
     push @{$self->{CtxStack}}, local $XFD::ctx = $self->_build_ctx;
 
-    $XFD::ctx->{XStackLevel} = $#{$self->{XStack}};
-
-    $self->_call_queued_subs( "start_element", @_ )
-        if $XFD::ctx->{start_element};
+    $self->_call_queued_subs( "start_element", @_ );
+#        if $XFD::ctx->{start_element};
 
     if ( exists $XFD::ctx->{ChildCtx}->{attribute}  ## Any attr handlers?
         && exists $elt->{Attributes}           ## Any attrs?
@@ -1447,10 +1684,10 @@ sub end_element {
 
     my $start_ctx = pop @{$self->{CtxStack}}; # Remove the child context
 
-    if ( $start_ctx->{EndSubs} ) {
+#    if ( $start_ctx->{EndSubs} ) {
         local $XFD::ctx = {};
         $self->_call_queued_end_subs( end_element => $start_ctx, @_ );
-    }
+#    }
 
     return;
 }
@@ -1718,7 +1955,7 @@ C<start-document::>, and is not necessary given C<start::>.
 
 This is like C<child::>, but selects only the C<start_element> events.
 
-=back
+back
 
 =item *
 

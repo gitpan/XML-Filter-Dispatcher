@@ -1,6 +1,8 @@
 - test "as_hash( /a/[b] )"
 
-- test in-order delivery to handlers: "/a[b]" => $h
+- get "*[ not *]" => [ "string()" => \&foo ] working
+
+- optimize the event queueing; we're keeping more events than we need to.
 
 - I think that the "last match wins" logic has been corrupted by
   the predicate event queueing: it's probably "last predicate to

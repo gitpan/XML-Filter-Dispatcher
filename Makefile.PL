@@ -37,8 +37,9 @@ WriteMakefile(
     NAME          => 'XML::Filter::Dispatcher',
     VERSION_FROM  => 'lib/XML/Filter/Dispatcher.pm',
     PREREQ_PM => {
-       XML::SAX::Base        => 0,
-       XML::NamespaceSupport => 0,
+       XML::SAX::Base             => 0,
+       XML::NamespaceSupport      => 0,
+       XML::SAX::EventMethodMaker => 0,
        %soft_prereqs,
     },
 );

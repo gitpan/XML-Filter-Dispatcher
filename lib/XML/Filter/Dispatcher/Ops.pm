@@ -29,6 +29,11 @@ use Carp qw( cluck confess );  ## NOT croak: this module must die "...\n".
 
 use constant is_tracing => defined $Devel::TraceSAX::VERSION;
 
+# Devel::TraceSAX does not work with perl5.8.0
+#use constant is_tracing => 1;
+#sub emit_trace_SAX_message { warn @_ };
+
+
 BEGIN {
     eval( is_tracing
         ? 'use Devel::TraceSAX qw( emit_trace_SAX_message ); 1'
@@ -295,6 +300,7 @@ sub XFD::Op::fixup {
                     || $_->isa( "XFD::Axis::attribute" )
                     || $_->isa( "XFD::Axis::start_element" )
                     || $_->isa( "XFD::Axis::end_element" )
+                    || $_->isa( "XFD::Axis::end" )
                 )
             ) {
                 ## The miniature version of XPath used in
@@ -570,7 +576,7 @@ sub XFD::PathTest::insert_next_in_to_template {
 ## results until future events are received if need be.
 sub XFD::PathTest::as_incr_code {
     my $self = shift;
-    my $context = shift;
+    my ( $context ) = @_;
 
     $self->check_context( $context );
 
@@ -589,7 +595,7 @@ sub XFD::PathTest::as_incr_code {
     ## possibles needs to be intersected with this axis' set
     ## of possibles.
     my $set_possibles = $self->can( "possible_event_types" );
-    local $context->{PossibleEventTypes} = [ $self->possible_event_types ]
+    local $context->{PossibleEventTypes} = [ $self->possible_event_types( @_ ) ]
         if $set_possibles;
     local $context->{PossiblesSetBy} = $self
         if $set_possibles;
@@ -617,7 +623,7 @@ sub XFD::PathTest::as_immed_code {
     my $self = shift;
 
     return $self->insert_next_in_to_template(
-        $self->immed_code_template,
+        $self->immed_code_template( @_ ),
         $self->[_next] ? $self->[_next]->as_immed_code( @_ ) : shift()
     );
 }
@@ -688,7 +694,6 @@ sub XFD::Action::gate_action {
     my $score = $self->action_score;
 
     $action_code = <<CODE_END;
-
 if ( $score > \$ctx->{HighScore} ) {
   emit_trace_SAX_message "selecting action $id (score $score > \$ctx->{HighScore}) for event ", int \$ctx if is_tracing;
   \$ctx->{HighScore} = $score;
@@ -1012,6 +1017,7 @@ push \@{\$ctx->{EndSubs}}, [
     ## Called to see if the leftmost predicate matched
     my ( \$ctx, \$postponement ) = \@_;
     emit_trace_SAX_message "EventPath: checking postponement ", int \$postponement, " for leftmost predicate in event ", int \$ctx if is_tracing;
+    local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
     for my \$ctx ( \@{\$postponement->[_p_contexts]} ) {
       \@{\$ctx->{Postponements}} = grep \$_ != \$postponement, \@{\$ctx->{Postponements}};
       emit_trace_SAX_message "EventPath: ", \@{\$ctx->{Postponements}} . " postponements left in event ", int \$ctx, ": (", join( ", ", map int \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
@@ -1276,11 +1282,10 @@ sub XFD::Converter::result_type { ( my $foo = ref shift ) =~ s/.*2//; $foo }
 sub XFD::Converter::as_immed_code {
     my $self = shift;
 
-    my $code = $self->immed_code_template;
+    my $code = $self->immed_code_template( @_ );
 
     my $parm = $self->[0];
-Carp::confess unless defined $parm;
-    _replace_NEXT $code, $parm->as_immed_code( @_ );
+    _replace_NEXT $code, $parm->as_immed_code( @_ ) if defined $parm;
 
     return $code;
 }
@@ -1427,11 +1432,11 @@ sub XFD::NodesetConverter::as_immed_code {
     my ( $context ) = @_;
 
     my $expr_code = eval {
-        $self->[0]->XFD::Converter::as_immed_code
+        $self->[0]->XFD::Converter::as_immed_code( $context );
     };
 
     if ( defined $expr_code ) {
-        my $code = $self->immed_code_template;
+        my $code = $self->immed_code_template( @_ );
         _replace_NEXT $code, $expr_code;
         return $code;
     }
@@ -2207,8 +2212,28 @@ sub XFD::self_node::curry_tests {
     @all_curry_tests;
 }
 
-sub XFD::self_node::incr_code_template { "<NEXT>" }
+# This little method lets rules like '@*' => [ 'string()' => sub { ... } ]
+# work: it checks to see if it must be called in an attribute context and
+# returns the current node.  Otherwise it defaults to the default action,
+# which is to request precursorization.  This is an awkward little kludge,
+# but I haven't taken the time to figure out how the compiler should handle
+# the general case of this situation.  TODO: Probably do more than just
+# attributes here; probably comment and PI.  Perhaps also characters, but
+# then the user gets no catenation.  hmmm.
+sub XFD::self_node::immed_code_template {
+    my $self = shift;
+    my ( $context ) = @_;
 
+    return $self->XFD::PathTest::immed_code_template( @_ )
+        unless $context->{PossibleEventTypes}
+            && @{$context->{PossibleEventTypes}} == 1
+            && $context->{PossibleEventTypes}->[0] eq "attribute";
+
+    return "\$ctx";
+}
+
+
+sub XFD::self_node::incr_code_template { "<NEXT>" }
 
 ##########
 @XFD::node_name::ISA = qw( XFD::PathTest );
@@ -2234,7 +2259,18 @@ sub XFD::node_name::new {
 
 sub XFD::node_name::curry_tests { qw( start_element attribute ) }
 
-sub XFD::node_name::possible_event_types { qw( start_element attribute ) }
+sub XFD::node_name::possible_event_types  {
+    my $self = shift;
+    my ( $context ) = @_;
+
+    ## TODO: This sort of winnowing for other PathTests.  Perhaps add
+    ## a helper member to XPathTest to do this.  I don't think we
+    ## always want to do it because some tests, like child:: probably
+    ## don't want to do this, but rather should hard set them.
+    my %possibles = map { ( $_ => undef ) } @{$context->{PossibleEventTypes} || [qw( start_element attribute )]};
+    grep exists $possibles{$_}, qw( start_element attribute );
+}
+
 sub XFD::node_name::useful_event_contexts { qw( start_element end_element attribute ) }
 
 sub XFD::_jclarkify_and_cmp {
@@ -2489,8 +2525,14 @@ sub XFD::Axis::attribute::principal_event_type { "attribute" }
 sub XFD::Axis::attribute::possible_event_types { qw( attribute ) }
 sub XFD::Axis::attribute::useful_event_contexts { qw( start_element end_element ) }
 
+#X This is an aborted attempt to make things following and attribute:: 
+#X run immediately.
+#Xsub XFD::Axis::attribute::as_incr_code {  ## not ..._template()!
 sub XFD::Axis::attribute::incr_code_template {
     my $self = shift;
+#X    my ( $context ) = @_;
+#X
+#X    $self->check_context( $context );
 
     ## node type tests only apply to certain event types, so
     ## we only curry to those events.  This makes EventType
@@ -2501,12 +2543,21 @@ sub XFD::Axis::attribute::incr_code_template {
     die $self->op_type, " followed by ", $self->[_next]->op_type,
         " can never match\n" unless @curry_tests;
 
+#X    local $context->{Axis}               = $self->op_type;
+#X    local $context->{PrincipalEventType} = $self->principal_event_type;
+#X    local $context->{PossibleEventTypes} = [ $self->possible_event_types( @_ ) ];
+#X
+#X    my $next_code = $self->[_next]->as_immed_code( $context );
+#X
+#X    return $self->insert_next_in_to_template( <<CODE_END, $next_code ) if @curry_tests == 1;
+
     return <<CODE_END if @curry_tests == 1;
 emit_trace_SAX_message "EventPath: queueing for attribute::" if is_tracing;
 push \@{\$ctx->{ChildCtx}->{$curry_tests[0]}}, [ ## attibute::
   sub {
     my ( \$postponement ) = \@_;
-    emit_trace_SAX_message "EventPath: in attribute" if is_tracing;
+    emit_trace_SAX_message "EventPath: in attribute \$ctx->{Node}->{Name}" if is_tracing;
+    local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
     <NEXT>
   },
   \$postponement,
@@ -2526,6 +2577,7 @@ CODE_END
     sub {
       my ( \$postponement ) = \@_;
       emit_trace_SAX_message "EventPath: in attribute" if is_tracing;
+      local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
       <NEXT>
     },
     \$postponement,
@@ -2710,7 +2762,7 @@ sub XFD::Axis::end::as_incr_code {  ## not ..._template()!
     local $context->{Axis} = $self->op_type;
 
     local $context->{PrincipalEventType} = $self->principal_event_type;
-    local $context->{PossibleEventTypes} = [ $self->possible_event_types ];
+    local $context->{PossibleEventTypes} = [ $self->possible_event_types( @_ ) ];
 
     if ( ! defined $context->{precursorize_action} ) {
         ## There are no predicates to leftwards
@@ -2775,7 +2827,7 @@ sub XFD::Axis::end_document::as_incr_code {  ## not ..._template()!
     local $context->{Axis} = $self->op_type;
 
     local $context->{PrincipalEventType} = $self->principal_event_type;
-    local $context->{PossibleEventTypes} = [ $self->possible_event_types ];
+    local $context->{PossibleEventTypes} = [ $self->possible_event_types( @_ ) ];
 
     if ( ! defined $context->{precursorize_action} ) {
         ## There are no predicates to leftwards
@@ -3014,10 +3066,25 @@ sub XFD::EventType::principal_event_type::incr_code_template {
 ## ::*
 ## possible event types: @possible_event_types
 if ( \$ctx->{EventType} eq "$desired_event_type" ) {
-  emit_trace_SAX_message "EventPath: principal event type '*' found" if is_tracing;
+  emit_trace_SAX_message "EventPath: principal event type $desired_event_type found" if is_tracing;
+    local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
   <NEXT>
 } # ::*
 CODE_END
 }
+
+#Xsub XFD::EventType::principal_event_type::immed_code_template {
+#X    my $self = shift;
+#X    my ( $context ) = @_;
+#X
+#X    my $desired_event_type = $context->{PrincipalEventType};
+#X    my @possible_event_types = @{$context->{PossibleEventTypes} || []};
+#X
+#X    return "<NEXT>"
+#X        if @possible_event_types == 1
+#X            && $possible_event_types[0] eq $desired_event_type;
+#X
+#X    return qq{\$ctx->{EventType} eq "$desired_event_type" ? <NEXT> : ()};
+#X}
 
 1;

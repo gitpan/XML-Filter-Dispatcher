@@ -69,6 +69,7 @@ sub {
             Rules => [
                 '@repeat' => sub { ++$count },
             ],
+#            Debug => 10,
         )
     );
 

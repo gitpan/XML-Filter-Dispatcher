@@ -13,7 +13,7 @@ my $has_graph;
 
 BEGIN { $has_graph = eval "require Graph;" ? 1 : 0 }
 
-plan tests => 16 + $has_graph * 2;
+plan tests => 16 + $has_graph * 2 * 2;
 
 
 {
@@ -59,6 +59,7 @@ plan tests => 16 + $has_graph * 2;
 }
 
 {
+    ## old style
     my $d = XML::Filter::Dispatcher->new(
         Rules => [
             graph  => sub { xpush( Graph->new() ); },
@@ -77,7 +78,37 @@ plan tests => 16 + $has_graph * 2;
             },
 
             # The result of the last handler is returned.
-            "end-element::graph" => \&xpop,
+            'end::graph' => \&xpop,
+        ],
+    );
+
+    my $got = QB->new( "graph", <<END_XML )->playback( $d );
+<graph>
+    <vertex name="0" />
+    <edge from="1" to="2" />
+    <edge from="2" to="1" />
+</graph>
+END_XML
+
+    my $expected = Graph->new->add_cycle( 1, 2 )->add_vertex( 0 );
+
+    ok $got, $expected;
+    ok $got->complete;
+}
+
+{
+    ## new style
+    my $d = XML::Filter::Dispatcher->new(
+        Rules => [
+            'graph'        => sub { xpush( Graph->new ) },
+            'end::graph'   => \&xpop,
+            'vertex'       => [ 'string( @name )' => sub { xadd     } ],
+            'edge'         => [ 'string()'        => sub { xpush {} } ],
+            'edge/@*'      => [ 'string()'        => sub { xset     } ],
+            'end::edge'    => sub { 
+                my $edge = xpop;
+                xpeek->add_edge( @$edge{"from","to"} );
+            },
         ],
     );
 

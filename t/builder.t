@@ -11,17 +11,17 @@ my $has_graph;
 
 my $h;
 
-my $ab = QB->new( "ab", <<'XML_END' );
-<root a="A"><a aa1="AA1" aa2="AA2"><b>B1</b><b>B2</b></a></root>
+my $ab = QB->new( "ef", <<'XML_END' );
+<root a="A"><e aa1="AA1" aa2="AA2"><f>B1</f><f>B2</f></e></root>
 XML_END
 
-my $ns = QB->new( "ns", <<'XML_END' );
+my $ns = QB->new( "nsef", <<'XML_END' );
 <root
     xmlns="default-ns"
     xmlns:foo="foo-ns"
     a="A"
     foo:a="FOOA"
-><a aa1="AA1" foo:aa1="AA2"><b>B1</b><foo:b>B2</foo:b></a></root>
+><e aa1="AA1" foo:aa1="AA2"><f>B1</f><foo:f>B2</foo:f></e></root>
 XML_END
 
 my @tests = (
@@ -29,28 +29,28 @@ sub {
     $h = $ab->playback( XML::Filter::Dispatcher->new(
         Rules => [
             ## Any leaf nodes get stringified
-            "//*" => [
-                "string()" => sub {
-                    push @{xpeek->{$_[1]->{LocalName}}}, xvalue;
-                },
-            ],
+            "//@*"            => [ "string()" => sub { xadd } ],
 
-            ## This next one is where we'd construct contained objects.
-            "//*[*]" => sub { xpush xpeek->{$_[1]->{LocalName}} = {} },
+            ## Any leaf nodes get stringified
+            "//*"             => [ "string()" => sub { xadd } ],
 
-            ## This next one is where we'd construct the root object.
-            "/*"              => sub { xpush {} },
+            ## This next one is where we'd new any contained objects.
+            "//*[*]"          => sub { xset {} },
+
+            ## This next one is where we would new the root object.
+            "/*"              => sub { xset {} },
 
             ## And here's where we return the root object
             "/end-element::*" => sub { xpop },
         ],
+#        Debug => 1,
     ) );
-
     ok ref $h, "HASH";
 },
 
-sub { ok $h->{a}->{b}->[0], "B1" },
-sub { ok $h->{a}->{b}->[1], "B2" },
+sub { ok $h->{a}->[0],      "A"  },
+sub { ok $h->{e}->{f}->[0], "B1" },
+sub { ok $h->{e}->{f}->[1], "B2" },
 
 );
 

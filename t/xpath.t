@@ -182,7 +182,6 @@ sub { d $a,    'number(true())',                                   [ '' ],      
 sub { d $a,    'number(" 1 ")',                                    [ '' ],               '1'         },
 sub { d $abc123, 'number(.)',                                      [ '' ],               '123321'    },
 sub { d $abc123, 'number()',                                       [ '' ],               '123321'    },
-
 sub { d $ns,   'local-name()',                                     [ '_' ],                          },
 sub { d $ns,   'local-name(a)',                                    [ '_a' ],                         },
 sub {
