@@ -2,3 +2,10 @@ MANIFEST
 MANIFEST.SKIP
 Makefile.PL
 lib/XML/Filter/Dispatcher.pm
+lib/XML/Filter/Dispatcher/Ops.pm
+lib/XML/Filter/Dispatcher/Parser.pm
+t/disp.t
+t/lex.t
+t/parse.t
+viz
+xfdxpath.yp

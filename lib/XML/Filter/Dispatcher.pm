@@ -142,7 +142,7 @@ and rule activation queueing)
 
 =cut
 
-$VERSION = 0.1;
+$VERSION = 0.11;
 @ISA = qw( XML::SAX::Base );
 
 use strict ;

@@ -1,0 +1,475 @@
+## Grammar by James Clark.  This would make a good XS routine :)
+
+%{
+    use XML::Filter::Dispatcher::Ops;
+
+    sub _no {
+        my $p = shift;
+        push @{$p->{USER}->{NONONO}}, join(
+            "",
+            "XPath construct not supported: ",
+            join( "", map ref $_ ? do {
+                my $f = ref $_;
+                $f =~ s/^XFD:://;
+                $f;
+            } : $_, @_ ),
+            " (grammar rule at ",
+            (caller)[1],
+            ", line ",
+            (caller)[2],
+            ")"
+        );
+    }
+%}
+
+%token QNAME
+%token NAME_COLON_STAR
+%token DOT
+%token DOT_DOT
+%token AT
+%token AXIS_NAME
+%token FUNCTION_NAME
+%token COMMENT
+%token PI
+%token TEXT
+%token NODE
+%token STAR
+%token LPAR
+%token RPAR
+%token LSQB
+%token RSQB
+%token LITERAL
+%token NUMBER
+%token COLON_COLON
+%token DOLLAR_QNAME
+%token SLASH
+%token SLASH_SLASH
+%token VBAR
+%token COMMA
+%token PLUS
+%token MINUS
+%token EQUALS
+%token GT
+%token LT
+%token GTE
+%token LTE
+%token MULTIPLY
+%token AND
+%token OR
+%token MOD
+%token DIV
+# %token QUO
+
+%%
+
+expr :
+  or_expr
+  ;
+
+or_expr :
+  and_expr
+  | or_expr OR and_expr { _no @_; }
+  ;
+
+and_expr :
+  equality_expr
+  | and_expr AND equality_expr { _no @_; }
+  ;
+
+equality_expr :
+  relational_expr
+  | equality_expr EQUALS relational_expr { _no @_; }
+  ;
+
+relational_expr :
+  additive_expr
+  | relational_expr LT additive_expr { _no @_; }
+  | relational_expr GT additive_expr { _no @_; }
+  | relational_expr LTE additive_expr { _no @_; }
+  | relational_expr GTE additive_expr { _no @_; }
+  ;
+
+additive_expr :
+  multiplicative_expr
+  | additive_expr PLUS multiplicative_expr { _no @_; }
+  | additive_expr MINUS multiplicative_expr { _no @_; }
+  ;
+
+multiplicative_expr :
+  unary_expr
+  | multiplicative_expr MULTIPLY unary_expr { _no @_; }
+  | multiplicative_expr DIV unary_expr { _no @_; }
+  | multiplicative_expr MOD unary_expr { _no @_; }
+  ;
+
+unary_expr :
+  union_expr
+  | '-' unary_expr { _no @_; }
+  ;
+
+union_expr :
+  path_expr
+  | union_expr VBAR path_expr { _no @_; }
+  ;
+
+path_expr :
+  location_path
+  | primary_expr predicates segment { _no @_; }
+  ;
+
+segment :
+  /* empty */                          { _no @_; }
+  | SLASH relative_location_path       { _no @_; }
+  | SLASH_SLASH relative_location_path { _no @_; }
+  ;
+
+location_path :
+  relative_location_path { _no @_; }
+  | absolute_location_path                 # { XFD::location->new( @_ ) }
+  ;
+
+absolute_location_path :
+  SLASH                                { XFD::doc_node->new( @_, undef ) }
+  | SLASH relative_location_path       { XFD::doc_node->new( @_ ) }
+  | SLASH_SLASH relative_location_path { 
+      ## /descendant-or-self::node()/relative_location_path
+      my $step = XFD::step->new(
+          $_[0],
+          "descendant-or-self",
+          XFD::node_type->new( $_[0], "node" ),
+          undef, ## predicates.
+      );
+      $step->set_next( $_[2] );
+      XFD::doc_node->new( $_[0], $_[1], $step );
+  };
+
+relative_location_path :
+  step
+  | relative_location_path SLASH step       { $_[1]->set_next( $_[3] ) ; $_[1] }
+  | relative_location_path SLASH_SLASH step {
+      ## relative_location_path/descendant-or-self::node()/step
+      my $step = XFD::step->new(
+          $_[0],
+          "descendant-or-self",
+          XFD::node_type->new( $_[0], "node" ),
+          undef, ## predicates.
+      );
+      $_[1]->set_next( $step );
+      $step->set_next( $_[3] );
+      $_[1];
+  }
+  ;
+
+step :
+  axis node_test predicates       { XFD::step->new( @_ ) }
+  | DOT {
+      ## /self::node()
+      XFD::step->new(
+        $_[0],
+        "self",
+        XFD::node_type->new(
+            $_[0],
+            "node"
+        ),
+        undef
+    );
+  }
+  | DOT_DOT { _no @_; }
+  ;
+
+axis:
+  /* empty */
+  | AXIS_NAME COLON_COLON
+  | AT { _no @_; }
+  ;
+
+predicates :
+  /* empty */
+  | predicates LSQB expr RSQB { _no @_; }
+  ;
+
+primary_expr :
+  DOLLAR_QNAME { _no @_; }
+  | LPAR expr RPAR { _no @_; }
+  | LITERAL { _no @_; }
+  | NUMBER { _no @_; }
+  | function_call { _no @_; }
+  ;
+
+function_call :
+  FUNCTION_NAME LPAR opt_args RPAR { _no @_; }
+  ;
+
+opt_args :
+  /* empty */ { _no @_; }
+  | args { _no @_; }
+  ;
+
+args :
+  expr { _no @_; }
+  | args COMMA expr { _no @_; }
+  ;
+  
+node_test :
+  QNAME
+  | STAR
+  | NAME_COLON_STAR { _no @_; }
+  | PI LPAR opt_literal RPAR { _no @_; }
+  | COMMENT LPAR RPAR { _no @_; }
+  | TEXT LPAR RPAR { _no @_; }
+  | NODE LPAR RPAR            { XFD::node_type->new( $_[0], $_[1] ) }
+  ;
+
+opt_literal :
+  /* empty */
+  | LITERAL { _no @_; }
+  ;
+
+%%
+
+=head1
+
+XML::Filter::Dispatcher::Parser - Parses the XPath subset used by ...::Dispatcher
+
+=head1 SYNOPSIS
+
+   use XML::Filter::Dispatcher::Parser;
+
+   my $result = XML::Filter::Dispatcher::Parser->parse( $xpath );
+
+=head1 DESCRIPTION
+
+Some notes on the parsing and evaluation:
+
+=over
+
+=item *
+
+Result Objects
+
+The result expressions alway return true or false.  For XPath
+expressions that would normally return a node-set, the result is true if
+the current SAX event would build a node that would be in the node set.
+No floating point or string return objects are supported (this may
+change).
+
+=item *
+
+Context
+
+The XPath context node is the document root (theoretically; in reality
+there is none).  The variables are the Dispatcher's data members, and
+the function library is XXX.
+
+Not sure what to do about the context position, but the context size is
+of necessity undefined.
+
+The namespace mapping will be added in when I grok the NamespaceHelper.
+
+=back
+
+=cut
+
+use Carp;
+
+my %tokens = (qw(
+    .           DOT
+    ..          DOT_DOT
+    @           AT
+    *           STAR
+    (           LPAR
+    )           RPAR
+    [           LSQB
+    ]           RSQB
+    ::          COLON_COLON
+    /           SLASH
+    //          SLASH_SLASH
+    |           VBAR
+    +           PLUS
+    -           MINUS
+    =           EQUALS
+    >           GT
+    <           LT
+    >=          GTE
+    <=          LTE
+),
+    "," =>      "COMMA"
+);
+
+my $simple_tokens =
+    join "|",
+        map
+            quotemeta,
+            reverse
+                sort {
+                    length $a <=> length $b
+                } keys %tokens;
+
+my $NCName = "(?:[a-zA-Z_][a-zA-Z0-9_.-]*)"; ## TODO: comb. chars & Extenders
+
+my %NodeType = qw(
+    node                   NODE
+    text                   TEXT
+    comment                COMMENT
+    processing-instruction PI
+);
+
+my $NodeType = "(?:" .
+    join( "|", map quotemeta, sort {length $a <=> length $b} keys %NodeType ) .
+    ")";
+
+my $AxisName = "(?:" .  join( "|", split /\n/, <<AXIS_LIST_END ) . ")" ;
+ancestor
+ancestor-or-self
+attribute
+child
+descendant
+descendant-or-self
+following
+following-sibling
+namespace
+parent
+preceding
+preceding-sibling
+self
+AXIS_LIST_END
+
+my %preceding_tokens = map { ( $_ => undef ) } ( qw(
+    @ :: [
+    and or mod div
+    *
+    / // | + - = != < <= > >=
+    ),
+    "(", ","
+) ;
+
+sub debugging () { 0 }
+
+sub lex {
+    my ( $p ) = @_;
+
+    ## Optimization notes: we aren't parsing War and Peace here, so
+    ## readability over performance.
+
+    my $d = $p->{USER};
+    my $input = \$d->{Input};
+
+    ## This needs to be more contextual, only recognizing axis/function-name
+    if ( ( pos( $$input ) || 0 ) == length $$input ) {
+        $d->{LastToken} = undef;
+        return ( '', undef );
+    }
+
+    my ( $token, $val ) ;
+    ## First do the disambiguation rules:
+
+    ## If there is a preceding token and the preceding token is not
+    ## one of "@", "::", "(", "[", "," or an Operator,
+    if ( defined $d->{LastToken}
+        && ! exists $preceding_tokens{$d->{LastToken}}
+    ) {
+        ## a * must be recognized as a MultiplyOperator
+        if ( $$input =~ /\G\s*\*/gc ) {
+            ( $token, $val ) = ( MULTIPLY => "*" );
+        }
+        ## an NCName must be recognized as an OperatorName.
+        elsif ( $$input =~ /\G\s*($NCName)/gc ) {
+            die "Expected and, or, mod or div, got '$1'"
+                unless 0 <= index "and|or|mod|div", $1;
+            ( $token, $val ) = ( uc $1, $1 );
+        }
+    }
+
+    ## NOTE: \s is only an approximation for ExprWhitespace
+
+    unless ( defined $token ) {
+        $$input =~ m{\G\s*(?:
+            ## If the character following an NCName (possibly after
+            ## intervening ExprWhitespace) is (, then the token must be
+            ## recognized as a NodeType or a FunctionName.
+
+            ($NCName)\s*(?=\()
+
+            ## If the two characters following an NCName (possibly after
+            ## intervening ExprWhitespace) are ::, then the token must be
+            ## recognized as an AxisName
+
+            |($NCName)\s*(?=::)
+
+            |($NCName:\*)                           #NAME_COLON_STAR
+            |((?:$NCName:)?$NCName)                 #QNAME
+            |('[^']*'|"[^"]*")                      #LITERAL
+            |(\d+(?:\.\d+)?|\.\d+)                  #NUMBER
+            |(\$(?:$NCName:)?$NCName)               #DOLLAR_QNAME
+            |($simple_tokens)
+        )\s*}gcx;
+
+        ( $token, $val ) =
+            defined $1  ? (
+                exists $NodeType{$1}
+                    ? ( $NodeType{$1}, $1 )
+                    : ( FUNCTION_NAME => $1 )
+            ) :
+        
+            defined $2  ? (
+                0 <= index( $AxisName, $2 )
+                    ? ( AXIS_NAME => $2 )
+                    : die "Expected an Axis Name, got '$2' at ",
+                        pos $p->{USER}->{Input},
+                        "\n"
+            ) :
+            defined  $3 ? ( NAME_COLON_STAR  =>  $3 ) :
+            defined  $4 ? ( QNAME            =>  $4 ) :
+            defined  $5 ? ( LITERAL          =>  $5 ) :
+            defined  $6 ? ( NUMBER           =>  $6 ) :
+            defined  $7 ? ( DOLLAR_QNAME     =>  $7 ) :
+            defined  $8 ? ( $tokens{ $8}     =>  $8 ) :
+            die "Failed to parse '$$input' at ",
+                pos $$input,
+                "\n";
+    }
+
+    $d->{LastToken} = $val;
+
+    if ( debugging ) {
+        warn
+            "'",
+            $$input,
+            "' (",
+            pos $$input,
+            "):",
+            join( " => ", map defined $_ ? $_ : "<undef>", $token, $val ),
+            "\n";
+    }
+
+    return ( $token, $val );
+}
+
+
+sub error {
+    my ( $p ) = @_;
+    print "Couldn't parse '$p->{USER}->{Input}' at position ", pos $p->{USER}->{Input}, "\n";
+}
+
+sub parse {
+    my $self = shift;
+    my ( $xpath, $options ) = @_;
+
+    my $p = XML::Filter::Dispatcher::Parser->new(
+        yylex   => \&lex,
+        yyerror => \&error,
+        $options->{Debug}
+            ? ( yydebug => 0x1D )
+            : (),
+    );
+    %{$p->{USER}} = %$options if $options;
+    $p->{USER}->{Input} = $xpath;
+    my $r = $p->YYParse;
+
+    croak join "\n", @{$p->{USER}->{NONONO}}
+        if $p->{USER}->{NONONO} ;
+
+    return $r;
+}
+
+1 ;
