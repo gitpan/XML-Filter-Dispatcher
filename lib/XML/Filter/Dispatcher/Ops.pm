@@ -836,8 +836,8 @@ Carp::confess unless @_;
     my $xvalue_expr = "";
     if ( $dispatcher->{SetXValue} ) {
         $xvalue_expr = $context->{SetXValuesEntry}
-            ? "local \$cur_self->{XValue} = \$ctx->{XValues}->[$action_id];\n"
-            : "local \$cur_self->{XValue} = \$ctx->{Node};\n";
+            ? "local \$d->{XValue} = \$ctx->{XValues}->[$action_id];\n"
+            : "local \$d->{XValue} = \$ctx->{Node};\n";
     }
 
     local $context->{CallActionDirectly} = 1
@@ -905,7 +905,7 @@ Carp::confess unless @_;
     emit_trace_SAX_message "EndSub end_ action for ", _ev \$ctx if is_tracing;
     my \$h = $new_handler_expr;
     my \$event_type = \$ctx->{EventType};
-    \$cur_self->{LastHandlerResult} = \$h->\$event_type( \$ctx->{Node} );
+    \$d->{LastHandlerResult} = \$h->\$event_type( \$ctx->{Node} );
   };
 CODE_END
 
@@ -926,17 +926,17 @@ CODE_END
   my \$event_type = \$ctx->{EventType};
   my \$h = $new_handler_expr;
 
-  if ( ! \$cur_self->{DocStartedFlags}->{\$h} ) {
-    \$cur_self->{DocStartedFlags}->{\$h} = 1;
+  if ( ! \$d->{DocStartedFlags}->{\$h} ) {
+    \$d->{DocStartedFlags}->{\$h} = 1;
     if ( \$event_type ne "start_document"
-      && ! \$cur_self->{SuppressAutoStartDocument}
+      && ! \$d->{SuppressAutoStartDocument}
     ) {
-      push \@{\$cur_self->{AutoStartedHandlers}}, \$h;
+      push \@{\$d->{AutoStartedHandlers}}, \$h;
       \$h->start_document( {} );
     }
   }
 
-  \$cur_self->{LastHandlerResult} = \$h->\$event_type( \$ctx->{Node} );
+  \$d->{LastHandlerResult} = \$h->\$event_type( \$ctx->{Node} );
 $end_event_forwarding_code}
 CODE_END
 }
@@ -1010,27 +1010,33 @@ sub action {
     ## directly, or perhaps set a score increment.
     $a_hash->{Score} = $action_num;
 
-    if ( ! defined $action || $action_type eq "SCALAR" ) {
+    if ( ! defined $action ) {
+        $a_hash->{Code} = "sub {}";
+        return XFD::Action::PerlCode->new( $a_hash ),
+    }
+
+    if ( $action_type eq "SCALAR" ) {
         $a_hash->{Code} = defined $action ? $action : "undef";
+        $a_hash->{IsInlineCode} = 1;
         return XFD::Action::PerlCode->new( $a_hash ),
     }
 
     if ( !$action_type ) {
         my $handler_name = $action;
-        die "Unknown handler name '$handler_name', ",
-            keys %{$dispatcher->{Handlers}}
-                ? (
-                    "known handlers: ",
-                    join ", ", map "'$_'",
-                        keys %{$dispatcher->{Handlers}}
-                )
-                : "no handlers were set in constructor call",
-            "\n"
-            unless exists $dispatcher->{Handlers}->{$handler_name};
+#        die "Unknown handler name '$handler_name', ",
+#            keys %{$dispatcher->{Handlers}}
+#                ? (
+#                    "known handlers: ",
+#                    join ", ", map "'$_'",
+#                        keys %{$dispatcher->{Handlers}}
+#                )
+#                : "no handlers were set in constructor call",
+#            "\n"
+#            unless exists $dispatcher->{Handlers}->{$handler_name};
 
         $handler_name =~ s/([\\'])/\\$1/g;
 
-        $a_hash->{Code} = "\$cur_self->{Handlers}->{'$handler_name'}";
+        $a_hash->{Code} = "\$d->{Handlers}->{'$handler_name'}";
 
         return XFD::Action::EventForwarder->new( $a_hash );
     }
@@ -1040,7 +1046,7 @@ sub action {
         ## directly.
         $a_hash->{CodeRef} = $action;
         $a_hash->{Code} =
-            "\$cur_self->{Actions}->[$action_num]->{CodeRef}->( \@_ )";
+            "\$d->{Actions}->[$action_num]->{CodeRef}->( \@_ )";
         return XFD::Action::PerlCode->new( $a_hash );
     }
 
@@ -1054,7 +1060,7 @@ sub action {
         ## Must be a SAX handler, make up some action code to
         ## install it and arrange for it's removal.
         $a_hash->{Handler} = $action;
-        $a_hash->{Code} = "\$cur_self->{Actions}->[$action_num]->{Handler}";
+        $a_hash->{Code} = "\$d->{Actions}->[$action_num]->{Handler}";
         return XFD::Action::EventForwarder->new( $a_hash );
     }
 
@@ -1827,7 +1833,7 @@ unless ( defined \$postponement->[_p_first_precursor+$precursor_number] ) { ## n
     my \$h = \$postponement->[_p_first_precursor+$precursor_number] =
         shift \@XFD::AsHashHandlers;
 
-    \$h->set_namespaces( \$cur_self->{Namespaces} ? %{ \$cur_self->{Namespaces} } : () );
+    \$h->set_namespaces( \$d->{Namespaces} ? %{ \$d->{Namespaces} } : () );
 
     emit_trace_SAX_message "EventPath: precursor $precursor_number is handled by \$h" if is_tracing;
 
@@ -1907,7 +1913,7 @@ unless ( defined \$postponement->[_p_first_precursor+$precursor_number] ) { ## n
     my \$h = \$postponement->[_p_first_precursor+$precursor_number] =
         shift \@XFD::AsStructHandlers;
 
-    \$h->set_namespaces( \$cur_self->{Namespaces} ? %{ \$cur_self->{Namespaces} } : () );
+    \$h->set_namespaces( \$d->{Namespaces} ? %{ \$d->{Namespaces} } : () );
 
     emit_trace_SAX_message "EventPath: precursor $precursor_number is handled by \$h" if is_tracing;
 
@@ -2307,7 +2313,7 @@ sub XFD::VariableReference::result_type { "any" }
 sub XFD::VariableReference::as_immed_code {
     my $self = shift;
     my $var_name = $self->[0];
-    return "\$cur_self->_look_up_var( '$var_name' )";
+    return "\$d->_look_up_var( '$var_name' )";
 }
 
 ###############################################################################
@@ -2864,34 +2870,53 @@ CODE_END
 
 
 sub XFD::Axis::attribute::immed_code_template {
+    my $self = shift;
+    ## Do a little belated optimization here
+    ## TODO: Generalize this to handle intervening XFD::unions and
+    ## to work for node_name tests.
+    my $kid = $self->[_next];
+    if ( $kid && $kid->isa( "XFD::namespace_test" ) ) {
+        my $gkid = $kid->[_next];
+        if ( $gkid && $gkid->isa( "XFD::node_local_name" ) ) {
+            ## Its an attribute::foo:bar expression, which can
+            ## be optimized very nicely, thank you
+            my $ns_uri = $kid->[0];
+            my $local_name = $gkid->[0];
+            return <<CODE_END;
+( ## attribute::prefix:name
+  exists \$ctx->{Node}->{Attributes}->{'{$ns_uri}$local_name'}
+    ? { ## A context for the found attribute
+      EventType => 'attribute',
+      Node      => \$ctx->{Node}->{Attributes}->{'{$ns_uri}$local_name'},
+      Parent    => \$ctx,
+    }
+    : ()
+)
+CODE_END
+        }
+    }
+
     my $sort_code = $dispatcher->{SortAttributes} ? <<'CODE_END' : "";
-    } sort {
-        ## Put attributes in a reproducable order, mostly for testing
-        ## purposes.
-        ## TODO: Look for Node->{AttributeOrder} here
-        ( \$a->{NamespaceURI} || "" ) cmp ( \$b->{NamespaceURI} || "" )
-                                      ||
-        ( \$a->{LocalName}    || "" ) cmp ( \$b->{LocalName}    || "" )
-                                      ||
-        ( \$a->{Name}         || "" ) cmp ( \$b->{Name}         || "" )
+  } sort {
+      ## Put attributes in a reproducable order, mostly for testing
+      ## purposes.
+      ## TODO: Look for Node->{AttributeOrder} here
+      ( \$a->{Name}         || "" ) cmp ( \$b->{Name}         || "" )
 CODE_END
 
     return <<CODE_END;
 ( ## attribute::
-  exists \$ctx->{Node}->{Attributes} && \$ctx->{Node}->{Attributes}
-  ?
-    <NEXT>
-    map {
-      my \$ctx = {
-        EventType => 'attribute',
-        Node      => \$_,
-        Parent    => \$ctx,
-      };
-      emit_trace_SAX_message "built attribute event ", _ev \$ctx if is_tracing;
-      \$ctx;
+  <NEXT>
+  map {
+    my \$ctx = {
+      EventType => 'attribute',
+      Node      => \$_,
+      Parent    => \$ctx,
+    };
+    emit_trace_SAX_message "built attribute event ", _ev \$ctx if is_tracing;
+    \$ctx;
 $sort_code
-    } values %{\$ctx->{Node}->{Attributes}}
-  : ()
+  } values %{\$ctx->{Node}->{Attributes}}
 ) # attribute::
 CODE_END
 }
@@ -2900,8 +2925,8 @@ CODE_END
 ##########
    @XFD::Axis::child::ISA = qw( XFD::Axis );
 sub XFD::Axis::child::possible_event_type_map { {
-    start_document => [qw( start_element comment processing_instruction )],
-    start_element  => [qw( start_element comment processing_instruction characters )],
+    start_document => [qw( start_prefix_mapping start_element comment processing_instruction )],
+    start_element  => [qw( start_prefix_mapping start_element comment processing_instruction characters )],
 } }
 
 sub XFD::Axis::child::useful_event_contexts { qw( start_document start_element ) }
@@ -2964,8 +2989,8 @@ sub XFD::Axis::descendant_or_self::possible_event_type_map { {
     ## performance improvement.  And it would take extra generated code,
     ## I think.
     ## these in start_document.  
-    'start_document' => [qw( start_element comment processing_instruction characters )],
-    'start_element'  => [qw( start_element comment processing_instruction characters )],
+    'start_document' => [qw( start_prefix_mapping start_element comment processing_instruction characters )],
+    'start_element'  => [qw( start_prefix_mapping start_element comment processing_instruction characters )],
 }; }
 
 ## useful in any event context, even though self:: alone would be
@@ -3093,7 +3118,7 @@ CODE_END
 #
 ##########
    @XFD::Axis::end_document::ISA = qw( XFD::Axis );
-sub XFD::Axis::end_document::principal_event_type { "end_document" }
+sub XFD::Axis::end_document::principal_event_type { "start_document" }
 sub XFD::Axis::end_document::possible_event_type_map { {
     start_document => [qw( end_document )],
 } }
@@ -3354,7 +3379,7 @@ sub XFD::EventType::node::curry_tests {
     return $self->[_next]->curry_tests
         if defined $self->[_next];
 
-    return @all_curry_tests, "end_element", "end_document";
+    return @all_curry_tests, "start_prefix_mapping", "end_element", "end_document";
 }
 ##########
    @XFD::EventType::text::ISA = qw( XFD::EventType );
@@ -3485,6 +3510,16 @@ sub XFD::Optim::start_element::as_incr_code {
     my $self = shift;
     my ( $context ) = @_;
     local $context->{PossibleEventTypes} = [qw( start_element )];
+    $self->XFD::union::as_incr_code( @_ );
+}
+
+##########
+   @XFD::Optim::start_prefix_mapping::ISA = qw( XFD::union );
+sub XFD::Optim::start_prefix_mapping::possible_event_types { qw( start_document start_element ) }
+sub XFD::Optim::start_prefix_mapping::as_incr_code {
+    my $self = shift;
+    my ( $context ) = @_;
+    local $context->{PossibleEventTypes} = [qw( start_prefix_mapping )];
     $self->XFD::union::as_incr_code( @_ );
 }
 

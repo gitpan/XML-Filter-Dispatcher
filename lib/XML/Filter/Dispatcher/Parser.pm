@@ -1,6 +1,6 @@
 ####################################################################
 #
-#    This file was generated using Parse::Yapp version 1.02.
+#    This file was generated using Parse::Yapp version 1.05.
 #
 #        Don't edit this file, use source file instead.
 #
@@ -25,7 +25,7 @@ use strict;
 #
 # This notice should remain unchanged.
 #
-# (c) Copyright 1998-1999 Francois Desarmenien, all rights reserved.
+# (c) Copyright 1998-2001 Francois Desarmenien, all rights reserved.
 # (see the pod text in Parse::Yapp module for use and distribution rights)
 #
 
@@ -37,7 +37,7 @@ use strict;
 
 use vars qw ( $VERSION $COMPATIBLE $FILENAME );
 
-$VERSION = '1.02';
+$VERSION = '1.05';
 $COMPATIBLE = '0.07';
 $FILENAME=__FILE__;
 
@@ -539,7 +539,7 @@ sub new {
         ref($class)
     and $class=ref($class);
 
-    my($self)=$class->SUPER::new( yyversion => '1.02',
+    my($self)=$class->SUPER::new( yyversion => '1.05',
                                   yystates =>
 [
 	{#State 0

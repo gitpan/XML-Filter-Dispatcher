@@ -5,15 +5,19 @@ use strict;
 use Carp;
 use Test;
 use XML::Filter::Dispatcher qw( :all );
+my $has_xsw;
+BEGIN { $has_xsw = eval "require XML::SAX::Writer"; }
 use UNIVERSAL;
 
-my $ns = QB->new( "nsef", <<'XML_END' );
+my $ns_doc = <<'XML_END';
 <root
     xmlns:foo="foo-ns"
     a="A"
     foo:a="FOOA"
 ><e aa1="AA1" foo:aa1="AA2"><f>B1</f><foo:f>B2</foo:f></e></root>
 XML_END
+
+my $ns = QB->new( "nsef", $ns_doc );
 
 my @out;
 
@@ -76,6 +80,30 @@ sub {
 sub { ok int @out, 2 },
 sub { ok $out[0], "a",   "out[0]" },
 sub { ok $out[1], "aa1", "out[1]" },
+
+sub {
+    my @stack;
+    my $prefix_count = 0;
+    $ns->playback( XML::Filter::Dispatcher->new(
+        Namespaces => {
+            goo  => "foo-ns",
+        },
+#        Debug => 1,
+        Rules => [
+            'start-document::*|node()'  => sub {
+                return unless xevent_type =~ /^(start|end)_/;
+                ++$prefix_count if xevent_type =~ /prefix/;
+                push @stack, xevent_type;
+            },
+            'end-document::*|end::node()' => sub {
+                return unless xevent_type =~ /^(start|end)_/;
+                die "tracking stack underflowed" unless @stack;
+                pop @stack;
+            },
+        ],
+    ) );
+    ok "$prefix_count:" . join( ",", @stack ), "1:";
+},
 
 );
 

@@ -2,8 +2,6 @@
 
 - get a[b[c[d]]] working
 
-- test "foo/end::bar" and "ns:foo/end::ns:bar"
-
 - optimize the event queueing; we're keeping more events than we need to.
 
 - There's a cheat in self_node::immed_code_template that returns the
@@ -26,18 +24,21 @@
   stylesheet language implementors.
   - new() should return a subclass
 
-- Optimize the ops tree by combining identical siblings in to
-  one: need to compile all rules in to a single union than allow the
-  union to push itself down a level.
+- Detect expressions that will require precursors at fixup time so
+  that we can tell what optimizations are safe (there's an IgnoreDelayToEnd
+  hack, for instance) before compiling.  This will also allow the
+  predicates in //a[b]/c, //a[b]/d, etc. to be combined.
 
 - See if we can avoid conflicts in the precursorization code; a quick
   glance shows that //text[self::text()] seems to be reusing the
   Precursors positions. (check this: the precursorization code has
   since been rewritten).
 
-- Centralize the generation code for queueing the curried functions.
-  optimize it so that queing that isn't possible (like for characters
-  events inside anything but start_element events) isn't done.
+- Reverse action execution order: top down would be more clear.
+
+- Don't loop through attributes if there's either a node_name op
+  or a (namespace_test + node_local_name) combo; we should just
+  look to see if the desired attribute is present.
 
 - Extract more helper subs in to a runtime to reduce the amount of
   generated code.
