@@ -45,7 +45,7 @@ sub {
         XML::SAX::Writer->new( Output => bless \( my $foo ), "main" );
     t(
         Rules => [
-            '//node()' => XML::SAX::Writer->new( Output => \$doc_root_out ),
+            'node()' => XML::SAX::Writer->new( Output => \$doc_root_out ),
             'foo' => $foo_handler,
             'bar' => $foo_handler, ## Test preventing multiple start_document()s
         ],
@@ -57,14 +57,13 @@ sub {
 },
 sub { my_ok $doc_root_out, "<root A='1'>a<subroot>bcdefgh</subroot>i</root>" },
 sub { my_ok $foo_out, "<foo><bar/></foo><foo><bar/></foo>" },
-
 sub {
     my $foo_handler =
         XML::SAX::Writer->new( Output => bless \( my $foo ), "main" );
     t(
         Rules => [
-            '//node()'   => $foo_handler,
-            '//node()'   => $foo_handler,
+            'node()'   => $foo_handler,
+            'node()'   => $foo_handler,
         ],
 #        Debug => 1,
     );
@@ -73,12 +72,62 @@ sub {
 },
 sub { my_ok $foo_out, $doc_string },
 
+## test xrun_next_action
+sub {
+    my $foo_handler =
+        XML::SAX::Writer->new( Output => bless \( my $foo ), "main" );
+    t(
+        Rules => [
+            'node()'  => $foo_handler,
+            'subroot' => sub {
+                my $self = shift;
+                $foo_handler->characters( { Data => "[" } );
+                xrun_next_action;
+                $foo_handler->characters( { Data => "{" } );
+            },
+            'end::subroot' => sub {
+                my $self = shift;
+                $foo_handler->characters( { Data => "}" } );
+                xrun_next_action;
+                $foo_handler->characters( { Data => "]" } );
+            },
+        ],
+#        Debug => 1,
+    );
+    $foo_out =~ s{\s+/>}{/>}g;
+    ( my $expected = $doc_string )
+        =~ s/(<subroot[^>]*>)(.*?)(<\/subroot[^>]*>)/[${1}{$2}${3}]/;
+
+    my_ok $foo_out, $expected;
+},
+
+## test something like the xrun_next_action example in the docs
+sub {
+    my $foo_handler =
+        XML::SAX::Writer->new( Output => bless \( my $foo ), "main" );
+    t(
+        Rules => [
+            'node()'  => $foo_handler,
+            '*[@A]' => sub {
+                my $attr = $_[1]->{Attributes}->{"{}A"};
+                local $attr->{Value} = $attr->{Value} + 1;
+                xrun_next_action;
+            },
+        ],
+#        Debug => 1,
+    );
+    $foo_out =~ s{\s+/>}{/>}g;
+    ( my $expected = $doc_string ) =~ s/A='1'/A='2'/g;
+
+    my_ok $foo_out, $expected;
+},
+
 ## See if we can excerpt <foo>
 sub {
     my $handler;
     t(
         Rules => [
-            '//node()' =>
+            'node()' =>
                 $handler = XML::SAX::Writer->new( Output => \$doc_root_out ),
             'foo' => undef,
         ],
@@ -93,7 +142,7 @@ sub {
     t(
         Handler => XML::SAX::Writer->new( Output => \$doc_root_out ),
         Rules => [
-            '//node()' => "Handler",
+            'node()' => "Handler",
             'foo'      => undef,
         ],
 #        Debug => 1,
@@ -141,7 +190,7 @@ sub {
         },
 
         Rules => [
-            '//node() ' => "Foo",
+            'node() ' => "Foo",
             '/*/*'      => undef,
         ],
 #        Debug => 1,
@@ -159,7 +208,7 @@ sub {
         },
 
         Rules => [
-            '//node() ' => "Foo",
+            'node() ' => "Foo",
         ],
 #        Debug => 1,
     );
@@ -181,6 +230,91 @@ sub {
     );
     ok $result, "result string";
 },
+
+## Make sure end_elements don't get dropped in this scenario
+sub {
+    my $foo_handler =
+        XML::SAX::Writer->new( Output => bless \( my $foo ), "main" );
+    t(
+        Rules => [
+            'node()'  => $foo_handler,
+            'foo' => [ 'string()' => sub {
+                xrun_next_action;
+            } ],
+        ],
+#        Debug => 1,
+    );
+    $foo_out =~ s{\s+/>}{/>}g;
+
+    my_ok $foo_out, $doc_string;
+},
+
+sub {
+    my $foo_handler =
+        XML::SAX::Writer->new( Output => bless \( my $foo ), "main" );
+    my $count = 0;
+    t(
+        Rules => [
+            'node()'  => $foo_handler,
+            'foo[*]' => [ 'string()' => sub {
+                ++$count;
+                xrun_next_action;
+            } ],
+        ],
+#        Debug => 1,
+    );
+    ok $count, 2;
+},
+sub {
+    $foo_out =~ s{\s+/>}{/>}g;
+
+    my_ok $foo_out, $doc_string;
+},
+
+sub {
+    my $foo_handler =
+        XML::SAX::Writer->new( Output => bless \( my $foo ), "main" );
+    my $count = 0;
+    t(
+        Rules => [
+            'node()'  => $foo_handler,
+            'foo[bar]' => [ 'string()' => sub {
+                ++$count;
+                xrun_next_action;
+            } ],
+        ],
+#        Debug => 1,
+    );
+    ok $count, 2;
+},
+sub {
+    $foo_out =~ s{\s+/>}{/>}g;
+
+    my_ok $foo_out, $doc_string;
+},
+
+sub {
+    my $foo_handler =
+        XML::SAX::Writer->new( Output => bless \( my $foo ), "main" );
+    my $count = 0;
+    t(
+        Rules => [
+            'node()'  => $foo_handler,
+            'foo[not(zap)]' => [ 'string()' => sub {
+                ++$count;
+                xrun_next_action;
+            } ],
+        ],
+#        Debug => 1,
+    );
+    ok $count, 2;
+},
+sub {
+    $foo_out =~ s{\s+/>}{/>}g;
+
+    my_ok $foo_out, $doc_string;
+},
+
 );
 
 plan tests => scalar @tests;

@@ -1,6 +1,6 @@
 package XML::Filter::Dispatcher ;
 
-$VERSION = 0.43;
+$VERSION = 0.45;
 
 =head1 NAME
 
@@ -429,6 +429,10 @@ To specify the namespaces, pass in an option like
 
 Then use C<prefix1:> and C<prefix2:> whereever necessary in patterns.
 
+A missing prefix on an element always maps to the default namespace URI,
+which is "" by default.  Attributes are treated likewise, though this
+is probably a bug.
+
 If your patterns contain prefixes (like the C<foo:> in C<foo:bar>), and
 you don't provide a Namespaces option, then the element names will
 silently be matched literally as "foo:bar", whether or not the source
@@ -576,9 +580,13 @@ C<start_...> and C<end_...> events.  By default
 There are several APIs provided: general, xstack, and EventPath
 variable handling.
 
-The general API provides C<new()> and C<xvalue()>.
-The variables API provides C<xset_var()> and C<xget_var()>.  The
-xstack API provides C<xadd()>, C<xset()>, C<xpush()>, C<xpeek()> and C<xpop()>.
+The general API provides C<new()> and C<xvalue()>, C<xvaluetype()>, and
+C<xrun_next_action()>.
+
+The variables API provides C<xset_var()> and C<xget_var()>.
+
+The xstack API provides C<xadd()>, C<xset()>, C<xoverwrite()>,
+C<xpush()>, C<xpeek()> and C<xpop()>.
 
 All of the "xfoo()" APIs may be called as a method or,
 within rule handlers, called as a function:
@@ -609,7 +617,7 @@ or by one of three API category tags:
 
    use XML::Filter::Dispatcher ":general";    ## xvalue()
    use XML::Filter::Dispatcher ":variables";  ## xset_var(), xget_var()
-   use XML::Filter::Dispatcher ":xtack";      ## xpush(), xpop(), and xpeek()
+   use XML::Filter::Dispatcher ":xstack";     ## xpush(), xpop(), and xpeek()
 
 or en mass:
 
@@ -617,11 +625,12 @@ or en mass:
 
 =cut
 
-@ISA = qw( Exporter );
+require Exporter;
+*import = \&Exporter::import;
 
 BEGIN {
-    my @general_API   = qw( xvalue );
-    my @xstack_API = qw( xpeek xpop xadd xset xpush xstack_empty );
+    my @general_API   = qw( xvalue xvaluetype xrun_next_action );
+    my @xstack_API = qw( xpeek xpop xadd xset xoverwrite xpush xstack_empty );
     my @variables_API = qw( xset_var xget_var );
     @EXPORT_OK = ( @general_API, @variables_API, @xstack_API );
     %EXPORT_TAGS = (
@@ -637,7 +646,6 @@ BEGIN {
 use strict ;
 
 use Carp ;
-use Exporter;
 #use XML::SAX::Base;
 use XML::Filter::Dispatcher::Parser;
 #use XML::NamespaceSupport;
@@ -659,7 +667,6 @@ BEGIN {
 ## TODO: Prefix all of the hash keys in $self with XFD_ to avoid
 ## conflict with X::S::B and subclasses / hander CODE.
 
-## TODO: xvalue = $ctx when the expr is a location path
 ## TODO: local $_ = xvalue before calling in to a sub
 
 ##
@@ -719,6 +726,7 @@ sub new {
 
     }
 
+    $self->{Rules} ||= [];
     $self->{Rules} = [ %{$self->{Rules}} ]
         if ref $self->{Rules} eq "HASH";
 
@@ -818,9 +826,81 @@ Returns the result of the last EventPath expression evaluated; this is
 the result that fired the current rule.  The example prints all text
 node children of C<E<lt>fooE<gt>> elements, for instance.
 
+For matching expressions, this is equivalent to $_[1] in action
+subroutines.
+
 =cut
 
-sub xvalue() { ( shift || $XFD::cur_self )->{XValue} }
+sub xvalue() {
+    local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
+
+    return $XFD::cur_self->{XValue};
+    exists $XFD::cur_self->{XValue}
+        ? $XFD::cur_self->{XValue}
+        : $XFD::ctx && $XFD::ctx->{Node};
+}
+
+=item xvaluetype
+
+Returns the type of the result returned by xvalue.  This is either
+a SAX event name, "attribute", or "" (for a string), "HASH" for a hash
+(note that struct() also returns a hash; these types are Perl data
+structure types, not EventPath types).
+
+=cut
+
+sub xvaluetype() {
+    local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
+
+    return $XFD::cur_self->{XValue} == $XFD::ctx->{Node}
+        ? $XFD::ctx->{EventType}
+        : ref $XFD::ctx->{Node};
+}
+
+=item xrun_next_action
+
+Runs the next action for the current node.  Ordinarily,
+XML::Filter::Dispatcher runs only one action per node; this allows an
+action to call down to the next action.
+
+This is especially useful in filters that tweak a document on the way
+by.  This tweaky sort of filter establishes a default "pass-through"
+rule and then additional override rules to tweak the values being
+passed through.
+
+Let's suppose you want to convert some mtimes from seconds since the
+epoch to a human readable format.  Here's a set of rules that might
+do that:
+
+    Rules => [
+        'node()' => "Handler",  ## Pass everything through by default.
+
+        'file[@mtime]' => sub { ## intercept and tweak the node.
+            my $attr = $_[1]->{Attributes}->{"{}mtime"};
+
+            ## Localize the changes: never assume that it is safe
+            ## to alter SAX elements on the way by in a general purpose
+            ## filter.  Some smart aleck might send the same events
+            ## to another filter with a Tee fitting or even back
+            ## through your filter multiple times from a cache.
+            local $attr->{Value} = localtime $attr->{Value};
+
+            ## Now that the changes are localised, fall through to
+            ## the default rule.
+            xrun_next_action;
+
+            ## We could emit other events here as well, but need not
+            ## in this example.
+         },
+    ],
+
+=cut
+
+sub xrun_next_action() {
+    local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
+    $XFD::cur_self->_execute_next_action;
+}
+
 
 =back
 
@@ -1188,7 +1268,7 @@ If no parameters are provided, xvalue is used.
 If the stack is empty, it just xpush()es on the stack.
 
 =cut
-    
+
 sub xadd {
     local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
     my $name = @_ > 1
@@ -1236,7 +1316,7 @@ sub xadd {
         }
         ## See if it's a blessed object that can add thingamies"
         elsif ( $meth = ( 
-            UNIVERSAL::can( $top, "add_$name" )
+               UNIVERSAL::can( $top, "add_$name" )
             || UNIVERSAL::can( $top, "push_$name" )
             || UNIVERSAL::can( $top, "add" )
         ) ) {
@@ -1249,6 +1329,7 @@ sub xadd {
                 defined $name ? $name : "item",
                 " to a '$t' (which is what is on the top of the xstack)";
         }
+
     }
 
     $XFD::cur_self->xpush( $new_item );
@@ -1258,8 +1339,8 @@ sub xadd {
 
 =item xset
 
-Like xadd, but tries to set a named value.
-
+Like C<xadd()>, but tries to set a named value.  Dies if the value is
+already defined (so duplicate values aren't silently ignored).
 
     xset $name, $new_item;
 
@@ -1293,7 +1374,7 @@ If no parameters are provided, xvalue is used.
 If the stack is empty, it just xpush()es on the stack.
 
 =cut
-    
+
 sub xset {
     local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
     my $name = @_ > 1
@@ -1316,6 +1397,76 @@ sub xset {
         my $top = $XFD::cur_self->xpeek;
         my $t = ref $top;
         my $meth;
+        my $was_set;
+        if ( $t eq "" ) {
+            croak "scalar on top of xstack is already defined"
+                if defined $top;
+            $XFD::cur_self->{XStack}->[-1] = $new_item; 
+        }
+        elsif ( $t eq "SCALAR" ) {
+            croak "SCALAR reference on top of xstack is already defined"
+                if defined $$top;
+            $$top = $new_item; 
+        }
+        elsif ( $t eq "HASH" ) {
+            croak "$name is already defined in HASH on top of xstack"
+                if defined $top->{$name};
+            $top->{$name} = $new_item;
+        }
+        ## See if it's a blessed object that can add thingamies"
+        elsif ( $meth = UNIVERSAL::can( $top, $name ) ) {
+            croak "$name is already defined in ", ref $top, " on top of xstack"
+                if defined $top->$meth;
+            $top->$meth( $new_item );
+        }
+        else {
+            croak "don't know how to xset a '$t' (which is what is on the top of the xstack)";
+        }
+
+        croak
+            "Already set ",
+            defined $name ? "'$name'" : "value",
+            " in ",
+            $t ? "scalar" : "$t ref",
+            " on top of xstack"
+            if $was_set;
+    }
+
+    $XFD::cur_self->xpush( $new_item );
+    return $new_item;
+}
+
+
+
+=item xoverwrite
+
+Exactly like xset but does not complain if the value has already been
+xadd(), xset() or xoverwrite().
+
+=cut
+    
+sub xoverwrite {
+    local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
+    my $name = @_ > 1
+        ? shift
+        : do {
+            croak "$XFD::ctx->{EventType} has no LocalName"
+                unless exists $XFD::ctx->{Node}->{LocalName}
+                       && defined exists $XFD::ctx->{Node}->{LocalName};
+            croak "$XFD::ctx->{EventType} a LocalName of ''"
+                unless length $XFD::ctx->{Node}->{LocalName};
+            $XFD::ctx->{Node}->{LocalName};
+        };
+
+
+    my $new_item = @_ ? shift : $XFD::cur_self->xvalue;
+    emit_trace_SAX_message "EventPath: xoverwrite()ing ", $name, " => ", $new_item if is_tracing;
+    local $Devel::TraceCalls::nesting_level = $Devel::TraceCalls::nesting_level + 1 if is_tracing;
+
+    if ( @{$XFD::cur_self->{XStack}} ) {
+        my $top = $XFD::cur_self->xpeek;
+        my $t = ref $top;
+        my $meth;
         if ( $t eq "" ) {
             $XFD::cur_self->{XStack}->[-1] = $new_item; 
         }
@@ -1330,9 +1481,10 @@ sub xset {
             $top->$meth( $new_item );
         }
         else {
-            croak "don't know how to xset a '$t' (which is what is on the top of the xstack)";
+            croak "don't know how to xoverwrite a '$t' (which is what is on the top of the xstack)";
         }
     }
+
     $XFD::cur_self->xpush( $new_item );
     return $new_item;
 }
@@ -1480,18 +1632,59 @@ sub _call_queued_end_subs {
 
     local $XFD::cur_self = $self;
 
+    local $XFD::ctx = $self->_build_end_ctx_from_start_ctx( $start_ctx );
     $XFD::ctx->{EventType} = $event_type;
     $XFD::ctx->{Node}      = $_[0];
     $XFD::ctx->{HighScore} = -1;
 
     my $i = 0;
-    for ( @{$start_ctx->{EndSubs}} ) {
-emit_trace_SAX_message "EventPath: calling EndSub ", $i++, " for event ", int $start_ctx if is_tracing;
+    if ( exists $start_ctx->{EndSubs} ) {
+        ## EndSubs are subroutines that are placed in a start_ context
+        ## to be run when the matching end_ event is reached.  Their
+        ## purpose is usually to evaluate some postponement and queue
+        ## an action for that postponement if need be.
+        my $end_subs = $start_ctx->{EndSubs};
+        while ( @$end_subs ) {
+            local $_ = pop @$end_subs;
+            emit_trace_SAX_message "EventPath: *** calling EndSub ", $i++, " for event ", int $start_ctx, " ***" if is_tracing;
+            local $Devel::TraceCalls::nesting_level = $Devel::TraceCalls::nesting_level + 1 if is_tracing;
 
-        $_->[0]->( @{$_}[1..$#$_], @_ )
+            $_->[0]->( @{$_}[1..$#$_], @_ )
+        }
     }
 
+#    $start_ctx->{EndContext} = $XFD::ctx;
+
     $self->_queue_pending_event( $XFD::ctx );
+}
+
+sub _execute_next_action {
+    my $self = shift;
+
+    my $actions = $XFD::ctx->{PendingActions};
+    my $key = ( sort { $a <=> $b } keys %$actions)[-1];
+    return unless defined $key;
+
+    emit_trace_SAX_message "EventPath: *** executing action $key for event ", int $XFD::ctx, " ***" if is_tracing;
+    local $Devel::TraceCalls::nesting_level = $Devel::TraceCalls::nesting_level + 1 if is_tracing;
+    my $sub = shift @{$actions->{$key}};
+    delete $actions->{$key} unless @{$actions->{$key}};
+
+    $self->{LastHandlerResult} = $sub->();
+    emit_trace_SAX_message "EventPath: result set to ", defined $self->{LastHandlerResult} ? "'$self->{LastHandlerResult}'" : "undef" if is_tracing;
+
+#    if ( exists $XFD::ctx->{EndContext} && exists $XFD::ctx->{EndSubs} ) {
+#    my $i = 0;
+#    while ( @{$XFD::ctx->{EndSubs}} ) {
+#        local $_ = shift @{$XFD::ctx->{EndSubs}};
+#        emit_trace_SAX_message "EventPath: *** calling delayed (due to postponed start_) EndSub ", $i++, " for event ", int $XFD::ctx, " ***" if is_tracing;
+#        local $XFD::ctx = $XFD::ctx->{EndContext};
+#        local $Devel::TraceCalls::nesting_level = $Devel::TraceCalls::nesting_level + 1 if is_tracing;
+#
+#        $_->[0]->( @{$_}[1..$#$_], @_ )
+#    }
+#    }
+
 }
 
 
@@ -1501,7 +1694,7 @@ sub _queue_pending_event {
 
     my ( $ctx ) = @_;
 
-#    if ( exists $ctx->{Action}
+#    if ( exists $ctx->{PendingActions}
 #        || ( $ctx->{Postponements} && @{$ctx->{Postponements}} )
 #    ) {
 #        emit_trace_SAX_message "EventPath: queuing pending event ", int $ctx if is_tracing;
@@ -1512,9 +1705,7 @@ sub _queue_pending_event {
 #    }
 
     while ( @{$self->{PendingEvents}}
-        && ! ( exists $self->{PendingEvents}->[0]->{Postponements}
-            && @{$self->{PendingEvents}->[0]->{Postponements}}
-        )
+        && ! $self->{PendingEvents}->[0]->{PostponementCount}
     ) {
         my $c = shift @{$self->{PendingEvents}};
         if (
@@ -1525,17 +1716,14 @@ sub _queue_pending_event {
             push @{$self->{XStackMarks}}, scalar @{$self->{XStack}};
         }
 
-        if ( exists $c->{Action} ) {
+        if ( exists $c->{PendingActions} ) {
             ## The "-1" here implements the "last match wins" logic.
             ## All rules are evaluated in order; the last rule to evaluate
             ## queues its action last.  TODO: test this in the face of
             ## precursors; actions may need to be set based on action
             ## numbers or something.
-            my $a = delete $c->{Action};
-            emit_trace_SAX_message "EventPath: *** executing action for event ", int $c, " ***" if is_tracing;
             local $XFD::ctx = $c;
-            $self->{LastHandlerResult} = $a->();
-emit_trace_SAX_message "EventPath: result set to ", defined $self->{LastHandlerResult} ? "'$self->{LastHandlerResult}'" : "undef" if is_tracing;
+            $self->_execute_next_action;
         }
         else {
             emit_trace_SAX_message "EventPath: discarding event ", int $c if is_tracing;
@@ -1560,10 +1748,10 @@ emit_trace_SAX_message "EventPath: result set to ", defined $self->{LastHandlerR
         @{$self->{PendingEvents}} . " events pending (",
         join( ", ",
             map
-                exists $_->{Postponements}
-                    ? int( $_ ).":".@{$_->{Postponements} || []}.":".(
-                        exists $_->{Action}
-                            ? $_->{Action}
+                $_->{PostponementCount}
+                    ? int( $_ ).":$_->{PostponementCount}:".(
+                        exists $_->{PendingActions}
+                            ? "action"  ## TODO: dump actions?
                             : "<No action>"
                     )
                     : (),
@@ -1595,22 +1783,39 @@ sub _build_ctx {
             $_->[1] = $ctx;
         }
     }
+    emit_trace_SAX_message "EventPath: built event ", int $ctx if is_tracing;
     return $ctx;
+}
+
+
+sub _build_end_ctx_from_start_ctx {
+    my $self = shift;
+
+    my ( $start_ctx ) = @_;
+
+    ## The $start_ctx's actions have yet to run.  They may
+    ## add actions to the end event.
+    $start_ctx->{PendingEndActions} ||= {};
+
+    my $end_ctx = {
+        PendingActions => $start_ctx->{PendingEndActions},
+    };
+    emit_trace_SAX_message "EventPath: built end_ event ", int $end_ctx if is_tracing;
+    return $end_ctx;
 }
 
 
 sub start_document {
     my $self = shift ;
 
-    $self->{XStack} = [];
-    $self->{XStackMarks} = [];
+    $self->{XStack}        = [];
+    $self->{XStackMarks}   = [];
     delete $self->{DocStartedFlags};
     $self->{PendingEvents} = [];
 
     local $XFD::ctx = $self->{DocCtx};
     $self->{CtxStack} = [ $XFD::ctx ];
-    $self->_call_queued_subs( "start_document", @_ )
-        if $XFD::ctx->{start_document};
+    $self->_call_queued_subs( "start_document", @_ );
 
     return;
 }
@@ -1620,15 +1825,21 @@ sub end_document {
     my $self = shift ;
     my ( $doc ) = @_;
 
-    pop @{$self->{CtxStack}};
+    confess "Bug: context stack should not be empty!"
+        unless @{$self->{CtxStack}};
+
+    my $start_ctx = pop @{$self->{CtxStack}};
+    die "end_document() mismatch: ",
+        defined $start_ctx ? $start_ctx->{EventType} : "undef", 
+        " from the context stack\n"
+        unless $start_ctx->{EventType} eq "start_document";
 
     confess "Bug: context stack should be empty!"
         unless ! @{$self->{CtxStack}};
 
-    if ( $self->{DocCtx}->{EndSubs} ) {
-        local $XFD::ctx = {};
-        $self->_call_queued_end_subs( end_document => $self->{DocCtx}, @_ );
-    }
+#    if ( $self->{DocCtx}->{EndSubs} ) {
+        $self->_call_queued_end_subs( end_document => $start_ctx, @_ );
+#    }
 
     if ( exists $self->{AutoStartedHandlers} ) {
         for ( reverse @{$self->{AutoStartedHandlers}} ) {
@@ -1685,7 +1896,6 @@ sub end_element {
     my $start_ctx = pop @{$self->{CtxStack}}; # Remove the child context
 
 #    if ( $start_ctx->{EndSubs} ) {
-        local $XFD::ctx = {};
         $self->_call_queued_end_subs( end_element => $start_ctx, @_ );
 #    }
 
@@ -1696,7 +1906,8 @@ sub end_element {
 compile_missing_methods __PACKAGE__, <<'CODE_END', sax_event_names;
 sub <EVENT> {
     my $self = shift ;
-    return unless $self->{CtxStack}->[-1]->{ChildCtx}->{<EVENT>};
+    return unless @{$self->{CtxStack}} &&
+        $self->{CtxStack}->[-1]->{ChildCtx}->{<EVENT>};
 
     my ( $data ) = @_;
 

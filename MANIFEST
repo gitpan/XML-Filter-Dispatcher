@@ -3,6 +3,7 @@ MANIFEST
 MANIFEST.SKIP
 Makefile.PL
 TODO
+bin/xfd_dump
 lib/XML/Filter/Dispatcher.pm
 lib/XML/Filter/Dispatcher/AsHashHandler.pm
 lib/XML/Filter/Dispatcher/AsStructHandler.pm
@@ -13,7 +14,10 @@ t/builder.t
 t/filter.t
 t/hash.t
 t/helpfulerrors.t
+t/namespaces.t
+t/nothing.t
 t/order.t
+t/postponements.t
 t/stooges.t
 t/struct.t
 t/useless.t

@@ -15,3 +15,5 @@ CVS/.*
 \.dot$
 \.output$
 \.cache\.
+^\.mvpm.d
+^foo

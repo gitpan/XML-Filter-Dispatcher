@@ -1,5 +1,26 @@
 CHANGES file for XML::Filter::Dispatcher
 
+
+
+0.45 Fri Jan  3 14:56:23 EST 2003
+    - Replace xset_fallthrough() with the much more flexible
+      xrun_next_action().  The latter is a more informative name,
+      too.
+    - xset() now croaks when overwriting a defined value.
+    - Added xoverwrite() to allow defined values to be overwritten.
+    - Empty Rules lists now work (ie do nothing).
+    - Unbuggered postponements a bit.  See t/postponements.t for a
+      couple of known failures (commented out).
+
+0.44 Tue Dec 31 10:40:20 EST 2002
+    - Added bin/xfd_dump
+    - xvalue now defaults to $_[1] (the sax data structure) if
+      the rule was a matching expression.
+    - added xvaluetype() (NEEDS TESTS!)
+    - Handle default namespace more gracefully.  Added t/namespaces.t
+    - implemented xset_fallthrough().
+
+0.43 Tue Dec 31 00:48:16 EST 2002
     - Allow "@*" => [ "string()" => \&foo ] rules to work.
     - Allow "end::foo" rules to work
     - Add tracing support to xstack directives.

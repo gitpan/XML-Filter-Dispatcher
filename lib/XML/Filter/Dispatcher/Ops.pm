@@ -650,10 +650,9 @@ sub XFD::ExprEval::as_incr_code {
 
     my $action_ops = $self->[_next];
 
-    ## Can't use $context->{HighScore} here, all exprs must be evaluated.
     my $action_id = $action_ops->action_id;
 
-    my $expr_code = get_expr_code( $self->[0], <<CODE_END, $self->[_next], undef, @_ );
+    my $expr_code = get_expr_code( "", $self->[0], <<CODE_END, $self->[_next], undef, @_ );
 ## expression evaluation
 \$ctx->{XValues}->[$action_id] = <EXPR>$boolerizer;
 emit_trace_SAX_message "EventPath: xvalue set to '\$ctx->{XValues}->[$action_id]' for event ", int \$ctx if is_tracing;
@@ -693,16 +692,14 @@ sub XFD::Action::gate_action {
     my $id    = $self->action_id;
     my $score = $self->action_score;
 
+    my $now_or_later = $context->{delay_to_end}
+        ? "PendingEndActions"
+        : "PendingActions";
+
     $action_code = <<CODE_END;
-if ( $score > \$ctx->{HighScore} ) {
-  emit_trace_SAX_message "selecting action $id (score $score > \$ctx->{HighScore}) for event ", int \$ctx if is_tracing;
-  \$ctx->{HighScore} = $score;
-  \$ctx->{Action} = sub {
+emit_trace_SAX_message "registering action $score for event ", int \$ctx if is_tracing;
+  push \@{\$ctx->{$now_or_later}->{$score}}, sub {
 $action_code  };
-}
-else {
-  emit_trace_SAX_message "not selecting action $id (score $score, not > \$ctx->{HighScore}) for event ", int \$ctx if is_tracing;
-}
 CODE_END
 
     if ( defined $context->{action_wrapper} ) {
@@ -730,7 +727,10 @@ Carp::confess unless @_;
 
     ## TODO: Don't local()ize and set \$cur_self->{XValue} unless need be.
     return $self->gate_action( <<CODE_END, $context ) ;
-local \$cur_self->{XValue} = \$ctx->{XValues}->[$action_id];
+local \$cur_self->{XValue} =
+  \$#{\$ctx->{XValues}} >= $action_id && defined \$ctx->{XValues}->[$action_id]
+    ? \$ctx->{XValues}->[$action_id]
+    : \$ctx->{Node};
 $action_code
 CODE_END
 }
@@ -755,7 +755,17 @@ sub XFD::SubRules::curry_tests {
 }
 
 sub XFD::SubRules::as_incr_code {
-    join "", map "## SubRule\n" . $_->as_incr_code( @_ ), @{shift()};
+    my $self = shift;
+
+    my @code;
+    my $i = 0;
+    for ( @$self ) {
+        my $code = $_->as_incr_code( @_ );
+        _indent $code if _indentomatic;
+        push @code, "## SubRule $i\n$code## end SubRule $i\n";
+        ++$i;
+    }
+    join "", @code;
 }
 
 sub XFD::SubRules::as_immed_code {
@@ -769,6 +779,7 @@ sub XFD::Action::EventForwarder::as_incr_code {
 Carp::confess unless @_;
 
     my $new_handler_expr = $self->action_code;
+    my $action_score     = $self->action_score;
 
     ## TODO: only forward end events if this op's not in start-element::
     ## or end-element:: context and is intercepting a start_document or
@@ -791,14 +802,14 @@ Carp::confess unless @_;
   \$cur_self->{LastHandlerResult} = \$h->\$event_type( \$ctx->{Node} );
 
   if ( substr( \$event_type, 0, 6 ) eq "start_" ) {
-    push \@{\$ctx->{EndSubs}}, [
+    emit_trace_SAX_message "EventPath: queuing end_ action for \$event_type event ", int \$ctx if is_tracing;
+    push \@{\$ctx->{PendingEndActions}->{$action_score}},
       sub {
-        my ( \$h ) = \@_;
+        emit_trace_SAX_message "EndSub end_ action for ", int \$ctx if is_tracing;
+        my \$h = $new_handler_expr;
         my \$event_type = \$ctx->{EventType};
         \$cur_self->{LastHandlerResult} = \$h->\$event_type( \$ctx->{Node} );
-      },
-      \$h
-    ];
+      };
   }
 }
 CODE_END
@@ -825,7 +836,7 @@ sub XFD::Action::EventCutter::as_incr_code {
 if ( is_tracing ) {
   my \$c = $cut_list_expr;
   for my \$h ( \@\$c ) {
-    emit_trace_SAX_message "EventPath: cutting from handler \$h";
+    emit_trace_SAX_message "EventPath: cutting from handler \$h" if is_tracing;
   }
 }
 CODE_END
@@ -879,7 +890,6 @@ sub action {
     }
 
     if ( !$action_type ) {
-        ## TODO: allow multiple handler names?
         my $handler_name = $action;
         die "Unknown handler name '$handler_name', ",
             keys %{$dispatcher->{Handlers}}
@@ -890,7 +900,7 @@ sub action {
                 )
                 : "no handlers were set in constructor call",
             "\n"
-            unless defined $dispatcher->{Handlers}->{$handler_name};
+            unless exists $dispatcher->{Handlers}->{$handler_name};
 
         $handler_name =~ s/([\\'])/\\$1/g;
 
@@ -938,21 +948,40 @@ sub action {
 ## when enough precursors are satisfied, then the expression can
 ## run.  This happens in predicates and when a function call or
 ## math/logical operator (not union) is the main expression.
+$f::indent = 0;  ## DEBUG ONLY
 sub get_expr_code {  ## TODO: rename this
-    my ( $expr, $action_template, $action_ops, $path_remainder, $context ) = @_;
+    my ( $is_predicate, $expr, $action_template, $action_ops, $path_remainder, $context ) = @_;
+    ## if defined path_remainder, then it's a predicate expression
+    ## otherwise, it's a top level expression.
 
+    ## The action template is what needs to happen with the results of
+    ## the expression.  It has a <EXPR> macro where the expression result
+    ## must be evaluated and a <NEXT> tag that gets replaced with the
+    ## actual operation (which may end up being the actual action, or it
+    ## may code to satisfy a postponement).
+
+    ## Localize Precursors.  If the expression requires precursors
+    ## to be run, then converting it to immediate code will add them to
+    ## Precursors.
+#warn "## it's a predicate\n" if $is_predicate;
     local $context->{Precursors};
 
-    my $expr_code   = $expr->as_immed_code( $context );
+    my $expr_code = $expr->as_immed_code( $context );
 
-    my $action_code = $action_template;
+    my $action_code = $is_predicate ? <<END_PREDICATE_TEMPLATE : $action_template;
+if ( <EXPR> ) {
+  emit_trace_SAX_message "EventPath: predicate postponement ", int \$postponement, " MATCHED!" if is_tracing;
+  local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
+  <NEXT>}
+END_PREDICATE_TEMPLATE
+
     _replace_NEXT $action_code, $expr_code, "<EXPR>";
     _replace_NEXT $action_code, $action_ops->as_incr_code( $context )
         if $action_ops;
 
     unless ( $context->{Precursors} ) {
         _replace_NEXT $action_code, $path_remainder->as_incr_code( $context )
-            if $path_remainder;
+            if $is_predicate;
 
         ## Return an immediate expression if no precursors were added.
         return $action_code
@@ -960,6 +989,20 @@ sub get_expr_code {  ## TODO: rename this
 
     ## Some part of the expression was precursorized.  inline all
     ## relative precursors.
+#{
+#    warn "## precursorized\n";
+#    my $c = $expr_code;
+#    _indent $c for 0..$f::indent+1;
+#    chomp $c;
+#    warn "  expr_code:\n$c\n";
+#    my $a = $action_code;
+#    chomp $a;
+#    _indent $a for 0..$f::indent+1;
+#    warn "  action_code:\n$a\n";
+#}
+
+    ## Take any precursors and set them up to run right after the
+    ## postponement is initialized.
     my @inline_precursor_codes;
 
     my %precursor_context = %$context;
@@ -977,120 +1020,170 @@ sub get_expr_code {  ## TODO: rename this
 
     my $postponement_init_code;
 
-    if ( $path_remainder ) {
-        if ( ! defined $context->{precursorize_action} ) {
-            ## this is the leftmost predicate expression
-            die "ARGH!" if $context->{precursorized_action_codes};
-            local $context->{precursorized_action_codes} = [];
-            local $context->{precursorize_action} = <<CODE_END;
-{
-  emit_trace_SAX_message "EventPath: adding context node ", int \$ctx, " to postponement ", int \$postponement if is_tracing;
-  push \@{\$ctx->{Postponements}}, \$postponement;
-  push \@{\$postponement->[_p_contexts]}, \$ctx;
-}
+    if ( $is_predicate ) {
+        ## It's a predicate
+        my $leftmost = ! defined $context->{precursorize_action}
+            ? " leftmost"
+            : "";
+
+        _indent $action_code if _indentomatic;
+        _indent $action_code if _indentomatic;
+        $postponement_init_code = $leftmost ? <<LEFTMOST_END : <<CODE_END;
+\$postponement = [ undef ]; ## Leftmost predicate, no parent to report to
+LEFTMOST_END
+\$postponement = [ \$postponement ]; ## Refer to parent postponement
 CODE_END
+        ## TODO: Only add the push EndSubs code if there
+        ## are <ACTION>s to perform
+        ## TODO: Figure out what <ACTION> to perform if this is a
+        ## predicate expression with no $path_remaining.  This can
+        ## happen in a pattern like "a[b[c]]"; the "b[c]" predicate
+        ## has no $path_remaining.  It *should* refer the results of
+        ## its postponement (whether or not a <c> was found) back up
+        ## to the parent postponement; probably by being in the
+        ## context of the implicit boolean() wrapped around it by
+        ## the a[] predicate.  See a commented out test in
+        ## t/postponements.t for an example.
+        $postponement_init_code .= <<CODE_END;
+emit_trace_SAX_message "EventPath: creating postponement ", int \$postponement, " for${leftmost} predicate in event ", int \$ctx if is_tracing;
 
-            $context->{action_wrapper} = <<CODE_END;
-while ( my \$ctx = shift \@{\$postponement->[_p_contexts]} ) {
-  <ACTION>}
-CODE_END
-
-            my $code = $path_remainder->as_incr_code( $context );
-            _indent $code if _indentomatic;
-            push @inline_precursor_codes,
-                "\n## remainder of location path\n$code";
-
-            _replace_NEXT $action_code, join "", @{$context->{precursorized_action_codes}};
-
-            _indent $action_code if _indentomatic;
-            _indent $action_code if _indentomatic;
-
-            $postponement_init_code = <<CODE_END;
-\$postponement = [ undef ];
-emit_trace_SAX_message "EventPath: creating postponement ", int \$postponement, " for leftmost predicate in event ", int \$ctx if is_tracing;
-CODE_END
-
-            $action_code = <<CODE_END;
 emit_trace_SAX_message "EventPath: queuing check sub for postponement ", int \$postponement if is_tracing;
 push \@{\$ctx->{EndSubs}}, [
   sub {
     ## Called to see if the leftmost predicate matched
     my ( \$ctx, \$postponement ) = \@_;
-    emit_trace_SAX_message "EventPath: checking postponement ", int \$postponement, " for leftmost predicate in event ", int \$ctx if is_tracing;
+    emit_trace_SAX_message "EventPath: checking${leftmost} predicate postponement ", int \$postponement, " in event ", int \$ctx if is_tracing;
     local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
-    for my \$ctx ( \@{\$postponement->[_p_contexts]} ) {
-      \@{\$ctx->{Postponements}} = grep \$_ != \$postponement, \@{\$ctx->{Postponements}};
-      emit_trace_SAX_message "EventPath: ", \@{\$ctx->{Postponements}} . " postponements left in event ", int \$ctx, ": (", join( ", ", map int \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
-    }
-$action_code  },
+<ACTION>  },
   \$ctx,
   \$postponement
 ];
 CODE_END
 
-        }
-        else {
-            ## It's a non-leftmost predicate.
+#    for my \$ctx ( \@{\$postponement->[_p_contexts]} ) {
+#      \@{\$ctx->{Postponements}} = grep \$_ != \$postponement, \@{\$ctx->{Postponements}};
+#      emit_trace_SAX_message "EventPath: ", \@{\$ctx->{Postponements}} . " postponements left in event ", int \$ctx, ": (", join( ", ", map int \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
+#    }
 
-            my $code = $path_remainder->as_incr_code( $context );
-            _indent $code if _indentomatic;
-            push @inline_precursor_codes,
-                "\n## remainder of location path\n$code";
-
-            $postponement_init_code = <<CODE_END;
-my \$parent_postponement = \$postponement;
-\$postponement = [ \$parent_postponement ];
-emit_trace_SAX_message "EventPath: creating postponement ", int \$postponement, " for predicate (non-leftmost) in event ", int \$ctx if is_tracing;
+        if ( $leftmost ) {
+            ## this is the leftmost predicate expression
+            die "ARGH!" if $context->{precursorized_action_codes};
+            local $context->{precursorized_action_codes} = [];
+            local $context->{precursorize_action} = <<CODE_END;
+{
+  my \$p = \$postponement->[_p_parent_postponement] || \$postponement;
+  emit_trace_SAX_message "EventPath: adding context node ", int \$ctx, " to postponement ", int \$p if is_tracing;
+  \$ctx->{PostponementCount}++;
+  push \@{\$p->[_p_contexts]}, \$ctx;
+}
 CODE_END
 
-            _replace_NEXT $action_code, <<CODE_END;
-if ( \$postponement->[_p_contexts] ) {
-  for my \$ctx ( \@{\$postponement->[_p_contexts]} ) {
-    emit_trace_SAX_message "EventPath: adding context node ", int \$ctx, " from postponement ", int \$postponement, " to parent postponement ", int \$parent_postponement if is_tracing;
-    push \@{\$ctx->{Postponements}}, \$parent_postponement;
-    \@{\$ctx->{Postponements}} = grep \$_ != \$postponement, \@{\$ctx->{Postponements}};
-    push \@{\$parent_postponement->[_p_contexts]}, \$ctx;
-    emit_trace_SAX_message \@{\$ctx->{Postponements}} . " postponements now in event ", int \$ctx, ": (", join( ", ", map int \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
+            $context->{action_wrapper} = <<CODE_END;
+if ( <EXPR> ) {
+  emit_trace_SAX_message "EventPath: predicate postponement ", int \$postponement, " MATCHED!" if is_tracing;
+  local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
+  while ( my \$ctx = shift \@{\$postponement->[_p_contexts]} ) {
+    \$ctx->{PostponementCount}--;
+    <ACTION>}
+}
+else {
+  while ( my \$ctx = shift \@{\$postponement->[_p_contexts]} ) {
+    \$ctx->{PostponementCount}--;
   }
 }
 CODE_END
 
-            _indent $action_code if _indentomatic;
-            _indent $action_code if _indentomatic;
-            $action_code = <<CODE_END;
-push \@{\$ctx->{EndSubs}}, [
-  sub {
-    ## Called to see if a non-leftmost predicate matched
-    my ( \$ctx, \$parent_postponement, \$postponement ) = \@_;
-    emit_trace_SAX_message "EventPath: checking postponement ", int \$postponement, " for predicate (non-leftmost)" if is_tracing;
-    for my \$ctx ( \@{\$postponement->[_p_contexts]} ) {
-      \@{\$ctx->{Postponements}} = grep \$_ != \$postponement, \@{\$ctx->{Postponements}};
-      emit_trace_SAX_message \@{\$ctx->{Postponements}} . " postponements left in event ", int \$ctx, ": (", join( ", ", map int \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
-    }
-$action_code  },
-  \$ctx,
-  \$parent_postponement,
-  \$postponement
-];
+            _indent $context->{action_wrapper} if _indentomatic;
+            _indent $context->{action_wrapper} if _indentomatic;
+            _replace_NEXT $context->{action_wrapper}, $expr_code, "<EXPR>";
+
+            $action_code = "## NO ACTION LEFT\n";
+
+local $f::indent = $f::indent + 1;
+            if ( $path_remainder ) {
+                my $code = $path_remainder->as_incr_code( $context );
+                push @inline_precursor_codes,
+                    "\n## remainder of location path\n$code";
+            }
+
+            _replace_NEXT
+                $postponement_init_code,
+                join( "", @{$context->{precursorized_action_codes}} ),
+                "<ACTION>";
+        }
+        else {
+#warn "    ## non-leftmost predicate\n";
+            ## It's a non-leftmost predicate.
+
+local $f::indent = $f::indent + 1;
+            if ( $path_remainder ) {
+                my $code = $path_remainder->as_incr_code( $context );
+                _indent $code if _indentomatic;
+                push @inline_precursor_codes,
+                    "\n## remainder of location path\n$code";
+            }
+
+##            $postponement_init_code = <<CODE_END;
+##my \$parent_postponement = \$postponement;
+##\$postponement = [ \$parent_postponement ];
+##emit_trace_SAX_message "EventPath: creating postponement ", int \$postponement, " for predicate (non-leftmost) in event ", int \$ctx if is_tracing;
+##CODE_END
+##
+            _replace_NEXT $action_code, <<CODE_END;
+if ( \$postponement->[_p_contexts] ) {
+  my \$parent_postponement = \$postponement->[_p_parent_postponement];
+  emit_trace_SAX_message "EventPath: moving context nodes from postponement ", int \$postponement, " to parent postponement ", int \$parent_postponement if is_tracing;
+  push
+    \@{\$parent_postponement->[_p_contexts]},
+    splice \@{\$postponement->[_p_contexts]};
+}
+else {
+  emit_trace_SAX_message "EventPath: but no context nodes in postponement ", int \$postponement if is_tracing;
+}
 CODE_END
+
+##            _indent $action_code if _indentomatic;
+##            _indent $action_code if _indentomatic;
+##            $action_code = <<CODE_END;
+##push \@{\$ctx->{EndSubs}}, [
+##  sub {
+##    ## Called to see if a non-leftmost predicate matched
+##    my ( \$ctx, \$parent_postponement, \$postponement ) = \@_;
+##    emit_trace_SAX_message "EventPath: checking postponement ", int \$postponement, " for predicate (non-leftmost)" if is_tracing;
+##warn \$postponement->[_p_first_precursor+0];
+##    for my \$ctx ( \@{\$postponement->[_p_contexts]} ) {
+##      \@{\$ctx->{Postponements}} = grep \$_ != \$postponement, \@{\$ctx->{Postponements}};
+##      emit_trace_SAX_message \@{\$ctx->{Postponements}} . " postponements left in event ", int \$ctx, ": (", join( ", ", map int \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
+##    }
+##$action_code  },
+##  \$ctx,
+##  \$parent_postponement,
+##  \$postponement
+##];
+##CODE_END
+            _replace_NEXT
+                $postponement_init_code,
+                join( "", @{$context->{precursorized_action_codes}} ),
+                "<ACTION>";
         }
     }
     else {
+#warn "  ## it's an expression\n";
         ## It's an expression, not a predicate
         _indent $action_code if _indentomatic;
         _indent $action_code if _indentomatic;
         $postponement_init_code = <<CODE_END;
-\$postponement = [ undef ];
-emit_trace_SAX_message "EventPath: creating postponement ", int \$postponement, " for expression in event ", int \$ctx if is_tracing;
-push \@{\$ctx->{Postponements}}, \$postponement;
+\$postponement = [ \$postponement ];  ## Refer to parent postponement, if present
+emit_trace_SAX_message "EventPath: creating expression postponement ", int \$postponement, " in event ", int \$ctx if is_tracing;
+\$ctx->{PostponementCount}++;
 push \@{\$ctx->{EndSubs}}, [
   sub {
     ## Called to calculate the postponed expression.
     my ( \$ctx, \$postponement ) = \@_;
-    emit_trace_SAX_message "EventPath: checking postponement ", int \$postponement, " in event ", int \$ctx if is_tracing;
-    \@{\$ctx->{Postponements}} = grep \$_ != \$postponement,
-      \@{\$ctx->{Postponements}};
-    emit_trace_SAX_message \@{\$ctx->{Postponements}} . " postponements left in event ", int \$ctx, ": (", join( ", ", map int \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
+    emit_trace_SAX_message "EventPath: checking expression postponement ", int \$postponement, " in event ", int \$ctx if is_tracing;
+    local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
+    \$ctx->{PostponementCount}--;
+    emit_trace_SAX_message \$ctx->{PostponementCount} . " postponements left in event ", int \$ctx if is_tracing;
 $action_code  },
   \$ctx,
   \$postponement
@@ -1101,6 +1194,25 @@ CODE_END
 
 #    my $code = $self->insert_next_in_to_template( <<CODE_END );
 ## TODO: figure a way for the absolute precursors to fire this expression.
+#{
+#    my $p = $postponement_init_code;
+#    _indent $p for 0..$f::indent+1;
+#    chomp $p;
+#    warn "  postponement_init_code:\n$p\n";
+#
+#    for ( @inline_precursor_codes ) {
+#        my $a = $_;
+#        chomp $a;
+#        _indent $a for 0..$f::indent+1;
+#        warn "  precursor_code:\n$a\n";
+#    }
+#
+#    my $a = $action_code;
+#    chomp $a;
+#    _indent $a for 0..$f::indent+1;
+#    warn "  action_code:\n$a\n";
+#}
+
 
     local $" = "";
     my $code = <<CODE_END;
@@ -2238,21 +2350,38 @@ sub XFD::self_node::incr_code_template { "<NEXT>" }
 ##########
 @XFD::node_name::ISA = qw( XFD::PathTest );
 
+sub XFD::PathTest::_parse_ns_uri_and_localname {
+    my $self = shift;
+    my ( $name ) = @_;
+
+    my ( $prefix, $local_name ) =
+        $name =~ /(.*):(.*)/
+            ? ( $1, $2 )
+            : ( "", $name );
+
+    my $uri = exists $dispatcher->{Namespaces}->{$prefix}
+        ? $dispatcher->{Namespaces}->{$prefix}
+        : length $prefix
+            ? die "prefix '$prefix' not declared in Namespaces option\n"
+            : "";
+        
+    die "prefix '$prefix:' not defined in Namespaces option\n"
+        unless defined $uri;
+
+    return ( $uri, $local_name );
+}
+
+sub XFD::PathTest::_parse_and_jclarkify {
+    my $self = shift;
+    my ( $uri, $local_name ) = $self->_parse_ns_uri_and_localname( @_ );
+    return "{$uri}$local_name";
+}
+
 sub XFD::node_name::new {
     my $self = shift->XFD::PathTest::new( @_ );
 
-    if ( defined $dispatcher->{Namespaces} ) {
-        my $name = $self->[0];
-        my ( $prefix, $local_name ) =
-            $name =~ /(.*):(.*)/
-                ? ( $1, $2 )
-                : ( "", $name );
-
-        my $uri = $dispatcher->{Namespaces}->{$prefix};
-        die "prefix '$prefix:' not declared in Namespaces option\n"
-            unless defined $uri;
-        $self->[0] = "{$uri}$local_name";
-    }
+    $self->[0] = $self->_parse_and_jclarkify( $self->[0] )
+        if defined $dispatcher->{Namespaces};
 
     return $self;
 }
@@ -2274,6 +2403,7 @@ sub XFD::node_name::possible_event_types  {
 sub XFD::node_name::useful_event_contexts { qw( start_element end_element attribute ) }
 
 sub XFD::_jclarkify_and_cmp {
+    ## NOT A METHOD.
     my ( $ctx, $jclarked_name2 ) = @_;
     my $data = $ctx->{Node};
     my $jclarked_name1;
@@ -2311,6 +2441,7 @@ sub XFD::node_name::incr_code_template {
     return <<CODE_END;
 if ( $cond ) {
   emit_trace_SAX_message "EventPath: node name '", '$self->[0]', "' found" if is_tracing;
+  local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
   <NEXT>}
 CODE_END
 }
@@ -2334,14 +2465,7 @@ sub XFD::namespace_test::new {
     die "Namespaces option required to support '$self->[0]' match\n"
         unless defined $dispatcher->{Namespaces};
 
-    $self->[0] =~ /(.*):\*\z/ or Carp::confess "Can't parse '$self->[0]'";
-
-    my $prefix = $1;
-    my $uri = $dispatcher->{Namespaces}->{$prefix};
-    die "prefix '$prefix:' not declared in Namespaces option\n"
-        unless defined $uri;
-
-    $self->[0] = $uri;
+    ( $self->[0] ) = $self->_parse_ns_uri_and_localname( $self->[0] );
 
     return $self;
 }
@@ -2366,6 +2490,7 @@ sub XFD::namespace_test::incr_code_template {
     return <<CODE_END;
 if ( $cond ) {
   emit_trace_SAX_message "EventPath: node namespace '", '$self->[0]', "' found" if is_tracing;
+  local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
   <NEXT>}
 CODE_END
 }
@@ -2391,6 +2516,7 @@ sub XFD::any_node_name::incr_code_template { <<CODE_END }
 ## any node name
 if ( \$ctx->{EventType} eq "start_element" || \$ctx->{EventType} eq "attribute" ) {
   emit_trace_SAX_message "EventPath: node name '*' found" if is_tracing;
+  local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
   <NEXT>
 } # any node name
 CODE_END
@@ -2486,14 +2612,12 @@ sub XFD::predicate::curry_tests {
 
 sub XFD::predicate::as_incr_code {
     my $self = shift;
+    my ( $context ) = @_;
 
     ## TODO: Figure a way for get_expr_code to optimize away this if ( ... ).
     ## Perhaps by adding a conditional op code.
 
-    return get_expr_code $self->[_expr], <<CODE_END, undef, $self->[_next], @_;
-if( <EXPR> ) {
-  <NEXT>}
-CODE_END
+    return get_expr_code "predicate", $self->[_expr], undef, undef, $self->[_next], @_;
 }
 
 ###############################################################################
@@ -2552,7 +2676,7 @@ sub XFD::Axis::attribute::incr_code_template {
 #X    return $self->insert_next_in_to_template( <<CODE_END, $next_code ) if @curry_tests == 1;
 
     return <<CODE_END if @curry_tests == 1;
-emit_trace_SAX_message "EventPath: queueing for attribute::" if is_tracing;
+emit_trace_SAX_message "EventPath: queuing for attribute::" if is_tracing;
 push \@{\$ctx->{ChildCtx}->{$curry_tests[0]}}, [ ## attibute::
   sub {
     my ( \$postponement ) = \@_;
@@ -2582,7 +2706,7 @@ CODE_END
     },
     \$postponement,
   ];
-  emit_trace_SAX_message "EventPath: queueing for attribute::" if is_tracing;
+  emit_trace_SAX_message "EventPath: queuing for attribute::" if is_tracing;
 $curry_code
 } # attribute::
 CODE_END
@@ -2641,7 +2765,7 @@ sub XFD::Axis::child::incr_code_template {
         " can never match\n" unless @curry_tests;
 
     return <<CODE_END if @curry_tests == 1;
-emit_trace_SAX_message "EventPath: queueing for child::" if is_tracing;
+emit_trace_SAX_message "EventPath: queuing for child::" if is_tracing;
 push \@{\$ctx->{ChildCtx}->{$curry_tests[0]}}, [  ## child::
   sub {
     my ( \$postponement ) = \@_;
@@ -2664,7 +2788,7 @@ CODE_END
     },
     \$postponement,
   ];
-  emit_trace_SAX_message "EventPath: queueing for child::" if is_tracing;
+  emit_trace_SAX_message "EventPath: queuing for child::" if is_tracing;
 $curry_code
 } # child::
 CODE_END
@@ -2710,7 +2834,7 @@ sub XFD::Axis::descendant_or_self::incr_code_template {
   my \$sub = sub {
     my ( \$sub, \$postponement ) = \@_;
 
-    emit_trace_SAX_message "EventPath: queueing for descendant-or-self::" if is_tracing;
+    emit_trace_SAX_message "EventPath: queuing for descendant-or-self::" if is_tracing;
     push \@{\$ctx->{ChildCtx}->{$curry_tests[0]}}, [ \$sub, \$sub, \$postponement ];
     ## ...run it on this node (aka "self")
     <NEXT>
@@ -2728,7 +2852,7 @@ CODE_END
   my \$sub = sub {
     my ( \$sub, \$postponement ) = \@_;
 
-    emit_trace_SAX_message "EventPath: queueing for descendant-or-self::" if is_tracing;
+    emit_trace_SAX_message "EventPath: queuing for descendant-or-self::" if is_tracing;
     my \$queue_record = [ \$sub, \$sub, \$postponement ];
 $curry_code
     ## ...run it on this node (aka "self")
@@ -2766,14 +2890,7 @@ sub XFD::Axis::end::as_incr_code {  ## not ..._template()!
 
     if ( ! defined $context->{precursorize_action} ) {
         ## There are no predicates to leftwards
-        local $context->{action_wrapper} = <<CODE_END;
-push \@{\$ctx->{EndSubs}}, [ 
-  sub {
-    emit_trace_SAX_message "EventPath: running end::" if is_tracing;
-    <ACTION>
-  },
-];
-CODE_END
+        local $context->{delay_to_end} = 1;
 
         ## This is more like self:: than child::, no need to
         ## wrap the next set of tests.
@@ -2831,14 +2948,7 @@ sub XFD::Axis::end_document::as_incr_code {  ## not ..._template()!
 
     if ( ! defined $context->{precursorize_action} ) {
         ## There are no predicates to leftwards
-        local $context->{action_wrapper} = <<CODE_END;
-push \@{\$ctx->{EndSubs}}, [ 
-  sub {
-    emit_trace_SAX_message "EventPath: running end_document::" if is_tracing;
-    <ACTION>
-  },
-];
-CODE_END
+        local $context->{delay_to_end} = 1;
 
         ## This is more like self:: than child::, no need to
         ## wrap the next set of tests.
@@ -2899,19 +3009,11 @@ sub XFD::Axis::end_element::as_incr_code {  ## not ..._template()!
     if ( ! defined $context->{precursorize_action} ) {
         ## There are no predicates to leftwards
 
-        local $context->{action_wrapper} = <<CODE_END;
-emit_trace_SAX_message "EventPath: queuing action to occur on end element for end_element::" if is_tracing;
-push \@{\$ctx->{EndSubs}}, [ 
-  sub {
-    emit_trace_SAX_message "EventPath: running end_element::" if is_tracing;
-    <ACTION>
-  },
-];
-CODE_END
+        local $context->{delay_to_end} = 1;
 
         my $code = <<CODE_END;
 { ## end_element::
-  emit_trace_SAX_message "EventPath: queueing for end_element::" if is_tracing;
+  emit_trace_SAX_message "EventPath: queuing for end_element::" if is_tracing;
   push \@{\$ctx->{ChildCtx}->{start_element}}, [
     sub {
       my ( \$postponement ) = \@_;
@@ -2932,7 +3034,7 @@ CODE_END
         ## the 'action' pushes the context on to the postponement's
         ## list of contexts.  We want that to occur in the end_element.
         my $action_code = <<CODE_END;
-emit_trace_SAX_message "EventPath: queueing for end_element::" if is_tracing;
+emit_trace_SAX_message "EventPath: queuing for end_element::" if is_tracing;
 push \@{\$ctx->{EndSubs}}, [ 
   sub {
     emit_trace_SAX_message "EventPath: running end_element::" if is_tracing;
@@ -2947,7 +3049,7 @@ CODE_END
 
         my $code = <<CODE_END;
 { ## end_element::
-  emit_trace_SAX_message "EventPath: queueing for end_element::" if is_tracing;
+  emit_trace_SAX_message "EventPath: queuing for end_element::" if is_tracing;
   push \@{\$ctx->{ChildCtx}->{start_element}}, [
     sub {
       my ( \$postponement ) = \@_;
@@ -2994,7 +3096,7 @@ sub XFD::Axis::start_element::incr_code_template {
 
     return <<CODE_END;
 ## start_element::
-emit_trace_SAX_message "EventPath: queueing for start-element::" if is_tracing;
+emit_trace_SAX_message "EventPath: queuing for start-element::" if is_tracing;
 push \@{\$ctx->{ChildCtx}->{start_element}}, [
   sub {
     my ( \$postponement ) = \@_;
@@ -3024,7 +3126,7 @@ sub XFD::EventType::node::curry_tests {
     return $self->[_next]->curry_tests
         if defined $self->[_next];
 
-    return @all_curry_tests;
+    return @all_curry_tests, "end_element", "end_document";
 }
 ##########
    @XFD::EventType::text::ISA = qw( XFD::EventType );

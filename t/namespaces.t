@@ -7,48 +7,34 @@ use Test;
 use XML::Filter::Dispatcher qw( :all );
 use UNIVERSAL;
 
-my $h;
-
-my $ab = QB->new( "ef", <<'XML_END' );
-<root a="A"><e aa1="AA1" aa2="AA2"><f>B1</f><f>B2</f></e></root>
-XML_END
-
 my $ns = QB->new( "nsef", <<'XML_END' );
 <root
-    xmlns="default-ns"
     xmlns:foo="foo-ns"
     a="A"
     foo:a="FOOA"
 ><e aa1="AA1" foo:aa1="AA2"><f>B1</f><foo:f>B2</foo:f></e></root>
 XML_END
 
+my @out;
+
 my @tests = (
 sub {
-    $h = $ab->playback( XML::Filter::Dispatcher->new(
+    $ns->playback( XML::Filter::Dispatcher->new(
+        Namespaces => { goo => "foo-ns" },
         Rules => [
-            ## Any leaf nodes get stringified
-            "//@*"            => [ "string()" => sub { xadd } ],
-
-            ## Any leaf nodes get stringified
-            "//*"             => [ "string()" => sub { xadd } ],
-
-            ## This next one is where we'd new any contained objects.
-            "//*[*]"          => sub { xset {} },
-
-            ## This next one is where we would new the root object.
-            "/*"              => sub { xset {} },
-
-            ## And here's where we return the root object
-            "/end-element::*" => sub { xpop },
+            'root'  => sub { push @out, "root"  },
+            '@goo:a'=> sub { push @out, "foo:a" },
+            'goo:f' => sub { push @out, "foo:f" },
+            'f'     => sub { push @out, "f"     },
         ],
-#        Debug => 1,
     ) );
-    ok ref $h, "HASH";
+    ok 1;
 },
 
-sub { ok $h->{a}->[0],      "A"  },
-sub { ok $h->{e}->{f}->[0], "B1" },
-sub { ok $h->{e}->{f}->[1], "B2" },
+sub { ok $out[0], "root",  "out[0]" },
+sub { ok $out[1], "foo:a", "out[1]" },
+sub { ok $out[2], "f",     "out[2]" },
+sub { ok $out[3], "foo:f", "out[3]" },
 
 );
 

@@ -70,7 +70,7 @@ sub rules {
                     ( $foo->{Name}
                         || ( $foo->{Target} || "" ) . ( $foo->{Data} || "" )
                     ),
-                    defined $xr
+                    defined $xr && ( ref $xr eq "" || ref $xr eq "SCALAR" )
                         ? ( "_", ref $xr ? $$xr : $xr )
                         : (),
                 );
@@ -103,16 +103,21 @@ sub d {
 
 #use Data::Dumper ; warn Dumper( \@rules );
 
-    my $d = XML::Filter::Dispatcher->new(
+    my $d = eval { XML::Filter::Dispatcher->new(
         Rules => \@rules,
         Vars => {
             foo => [ boolean => "bar" ],
         },
         %$options,
-    );
+    ) };
 
     @log = ();
-    $qb->playback( $d );
+    if ( $d ) {
+        $qb->playback( $d );
+    }
+    else {
+        push @log, split /\n/, $@;
+    }
     @_ = ( \@log, $expect, $rule );
     goto &eq_or_diff;
 

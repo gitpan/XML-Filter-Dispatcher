@@ -36,10 +36,13 @@ $soft_prereqs{Devel::TraceSAX} = 0.021
 WriteMakefile(
     NAME          => 'XML::Filter::Dispatcher',
     VERSION_FROM  => 'lib/XML/Filter/Dispatcher.pm',
+    EXE_FILES     => [qw( bin/xfd_dump )],
+
     PREREQ_PM => {
        XML::SAX::Base             => 0,
        XML::NamespaceSupport      => 0,
        XML::SAX::EventMethodMaker => 0,
+       XML::SAX::ParserFactory    => 0,
        %soft_prereqs,
     },
 );
