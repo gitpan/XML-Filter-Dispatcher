@@ -25,7 +25,7 @@ XML::Filter::Dispatcher::Ops - The Syntax Tree
 
 package XFD;
 
-use Carp qw( cluck confess );  ## NOT croak: this module must die "...\n".
+use Carp qw( confess );  ## NOT croak: this module must die "...\n".
 
 use constant is_tracing => defined $Devel::TraceSAX::VERSION;
 
@@ -33,6 +33,9 @@ use constant is_tracing => defined $Devel::TraceSAX::VERSION;
 #use constant is_tracing => 1;
 #sub emit_trace_SAX_message { warn @_ };
 
+## Some debugging aids
+*_ev = \&XML::Filter::Dispatcher::_ev;
+*_po = \&XML::Filter::Dispatcher::_po;
 
 BEGIN {
     eval( is_tracing
@@ -280,15 +283,23 @@ sub XFD::Op::new {
 
 sub XFD::Op::op_type { ( my $type = ref shift ) =~ s/.*:// ; $type }
 
+## The optimizer combines common expressions in some cases (it should
+## do more, right now it only does common leading op codes).  To do this
+## it needs to know the type of the operator and its arguments, if any.
+## By default, the signature is this op's reference id, which makes each
+## op look different to the optimizer.
+sub XFD::Op::optim_signature { int shift }
+
 
 sub XFD::Op::is_constant {
     my $self = shift;
     return ! grep ! $_->is_constant, @$self;
 }
-
-
+ 
 ## fixup is called on a freshly parsed op tree just before it's
-## compiled to do optimization and other conversions.
+## compiled to convert expression like 'A' to be like '//A'.
+## TODO: Perhaps move this to an XML::Filter::Dispatcher::_fixup(),
+## like _optimize().
 sub XFD::Op::fixup {
     my $self = shift;
     my ( $context ) = @_;
@@ -300,7 +311,7 @@ sub XFD::Op::fixup {
                     || $_->isa( "XFD::Axis::attribute" )
                     || $_->isa( "XFD::Axis::start_element" )
                     || $_->isa( "XFD::Axis::end_element" )
-                    || $_->isa( "XFD::Axis::end" )
+#                    || $_->isa( "XFD::Axis::end" )
                 )
             ) {
                 ## The miniature version of XPath used in
@@ -309,7 +320,10 @@ sub XFD::Op::fixup {
                 ## the expression begins with a child:: or
                 ## attribute:: axis (or their abbreviations: no
                 ## axis => child:: and @ => attribute::).
-                my $op = XFD::Axis::descendant_or_self->new;
+                my $op = XFD::EventType::node->new;
+                $op->set_next( $_ );
+                $_ = $op;
+                $op = XFD::Axis::descendant_or_self->new;
                 $op->set_next( $_ );
                 $_ = $op;
                 $op = XFD::doc_node->new;
@@ -368,6 +382,9 @@ sub XFD::Op::_add_to_graphviz {
     my $label = join( "",
         "{",
         $self->op_type,
+        $self->isa( "XFD::Action" ) && $self->[0]->{DelayToEnd}
+            ? " (end::)"
+            : (),
         $port_labels eq "<port0>"
             ? ()
             : ( "|{", $port_labels, "}" ),
@@ -404,12 +421,14 @@ sub XFD::Op::_add_to_graphviz {
 
 sub XFD::Op::as_graphviz {
     my $self = shift;
+    my $g  = @_ ? shift : do {
 
-    require GraphViz;
-    my $g = GraphViz->new(
-        nodesep => 0.1,
-        ranksep => 0.1,
-    );
+        require GraphViz;
+        my $g = GraphViz->new(
+            nodesep => 0.1,
+            ranksep => 0.1,
+        );
+    };
 
     $self->_add_to_graphviz( $g );
 
@@ -542,6 +561,19 @@ sub XFD::PathTest::result_type { "nodeset" }
 
 sub _next() { -1 }
 
+## This next one is used by external code like the optimizer,
+## not by this module.
+sub XFD::PathTest::get_next { $_[0]->[_next] }
+sub XFD::PathTest::force_set_next { $_[0]->[_next] = $_[1] }
+
+sub XFD::PathTest::optim_signature {
+    my $self = shift;
+    return join "",
+        ref( $self ), "(", defined $self->[0] ? "'$self->[0]'" : "undef", ")";
+}
+
+
+
 sub XFD::PathTest::set_next {
     my $self = shift;
 Carp::confess "undef!" unless defined $_[0];
@@ -556,6 +588,29 @@ Carp::confess "_next ($self->[_next]) can't set_next" unless $self->[_next]->can
     else {
         $self->[_next] = shift;
     }
+}
+
+## A utility function required by node_name and namespace_test to parse
+## prefix:localname strings.
+sub XFD::PathTest::_parse_ns_uri_and_localname {
+    my $self = shift;
+    my ( $name ) = @_;
+
+    my ( $prefix, $local_name ) =
+        $name =~ /(.*):(.*)/
+            ? ( $1, $2 )
+            : ( "", $name );
+
+    my $uri = exists $dispatcher->{Namespaces}->{$prefix}
+        ? $dispatcher->{Namespaces}->{$prefix}
+        : length $prefix
+            ? die "prefix '$prefix' not declared in Namespaces option\n"
+            : "";
+        
+    die "prefix '$prefix:' not defined in Namespaces option\n"
+        unless defined $uri;
+
+    return ( $uri, $local_name );
 }
 
 ## child:: and descendant-or-self:: axes need to curry to child nodes.
@@ -693,7 +748,7 @@ sub XFD::ExprEval::as_incr_code {
     my $expr_code = get_expr_code( "", $self->[0], <<CODE_END, $self->[_next], undef, @_ );
 ## expression evaluation
 \$ctx->{XValues}->[$action_id] = <EXPR>$boolerizer;
-emit_trace_SAX_message "EventPath: xvalue set to '\$ctx->{XValues}->[$action_id]' for event ", int \$ctx if is_tracing;
+emit_trace_SAX_message "EventPath: xvalue set to '\$ctx->{XValues}->[$action_id]' for event ", _ev \$ctx if is_tracing;
 <NEXT>
 # end expression evaluation
 CODE_END
@@ -719,6 +774,12 @@ sub XFD::Action::action_code  { return shift->[0]->{Code}  }
 sub XFD::Action::action_id    { return shift->[0]->{Id}    }
 sub XFD::Action::action_score { return shift->[0]->{Score} }
 
+sub XFD::Action::fixup {
+    my $self = shift;
+    my ( $context ) = @_;
+    $self->[0]->{DelayToEnd} = $context->{DelayToEnd};
+}
+
 sub XFD::Action::gate_action {
     my $self = shift;
     my $action_code = join shift, "## action\n", "# end action\n";
@@ -730,12 +791,13 @@ sub XFD::Action::gate_action {
     my $id    = $self->action_id;
     my $score = $self->action_score;
 
-    my $now_or_later = $context->{delay_to_end}
-        ? "PendingEndActions"
-        : "PendingActions";
+    my ( $now_or_later, $s ) =
+        $self->[0]->{DelayToEnd} && ! $context->{IgnoreDelayToEnd}
+        ? ( "PendingEndActions", "pending end action" )
+        : ( "PendingActions", "pending action" );
 
     $action_code = <<CODE_END;
-emit_trace_SAX_message "registering action $score for event ", int \$ctx if is_tracing;
+emit_trace_SAX_message "adding $s $score for event ", _ev \$ctx if is_tracing;
   push \@{\$ctx->{$now_or_later}->{$score}}, sub {
 $action_code  };
 CODE_END
@@ -840,10 +902,10 @@ Carp::confess unless @_;
   \$cur_self->{LastHandlerResult} = \$h->\$event_type( \$ctx->{Node} );
 
   if ( substr( \$event_type, 0, 6 ) eq "start_" ) {
-    emit_trace_SAX_message "EventPath: queuing end_ action for \$event_type event ", int \$ctx if is_tracing;
+    emit_trace_SAX_message "EventPath: queuing end_ action for \$event_type event ", _ev \$ctx if is_tracing;
     push \@{\$ctx->{PendingEndActions}->{$action_score}},
       sub {
-        emit_trace_SAX_message "EndSub end_ action for ", int \$ctx if is_tracing;
+        emit_trace_SAX_message "EndSub end_ action for ", _ev \$ctx if is_tracing;
         my \$h = $new_handler_expr;
         my \$event_type = \$ctx->{EventType};
         \$cur_self->{LastHandlerResult} = \$h->\$event_type( \$ctx->{Node} );
@@ -1008,8 +1070,7 @@ sub get_expr_code {  ## TODO: rename this
 
     my $action_code = $is_predicate ? <<END_PREDICATE_TEMPLATE : $action_template;
 if ( <EXPR> ) {
-  emit_trace_SAX_message "EventPath: predicate postponement ", int \$postponement, " MATCHED!" if is_tracing;
-  local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
+  emit_trace_SAX_message "EventPath: predicate postponement ", _po \$postponement, " MATCHED!" if is_tracing;
   <NEXT>}
 END_PREDICATE_TEMPLATE
 
@@ -1083,15 +1144,14 @@ CODE_END
         ## the a[] predicate.  See a commented out test in
         ## t/postponements.t for an example.
         $postponement_init_code .= <<CODE_END;
-emit_trace_SAX_message "EventPath: creating postponement ", int \$postponement, " for${leftmost} predicate in event ", int \$ctx if is_tracing;
+emit_trace_SAX_message "EventPath: creating postponement ", _po \$postponement, " for${leftmost} predicate in event ", _ev \$ctx if is_tracing;
 
-emit_trace_SAX_message "EventPath: queuing check sub for postponement ", int \$postponement if is_tracing;
+emit_trace_SAX_message "EventPath: queuing check sub for postponement ", _po \$postponement if is_tracing;
 push \@{\$ctx->{EndSubs}}, [
   sub {
     ## Called to see if the leftmost predicate matched
     my ( \$ctx, \$postponement ) = \@_;
-    emit_trace_SAX_message "EventPath: checking${leftmost} predicate postponement ", int \$postponement, " in event ", int \$ctx if is_tracing;
-    local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
+    emit_trace_SAX_message "EventPath: checking${leftmost} predicate postponement ", _po \$postponement, " in event ", _ev \$ctx if is_tracing;
 <ACTION>  },
   \$ctx,
   \$postponement
@@ -1100,7 +1160,7 @@ CODE_END
 
 #    for my \$ctx ( \@{\$postponement->[_p_contexts]} ) {
 #      \@{\$ctx->{Postponements}} = grep \$_ != \$postponement, \@{\$ctx->{Postponements}};
-#      emit_trace_SAX_message "EventPath: ", \@{\$ctx->{Postponements}} . " postponements left in event ", int \$ctx, ": (", join( ", ", map int \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
+#      emit_trace_SAX_message "EventPath: ", \@{\$ctx->{Postponements}} . " postponements left in event ", _ev \$ctx, ": (", join( ", ", map _ev \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
 #    }
 
         if ( $leftmost ) {
@@ -1110,16 +1170,15 @@ CODE_END
             local $context->{precursorize_action} = <<CODE_END;
 {
   my \$p = \$postponement->[_p_parent_postponement] || \$postponement;
-  emit_trace_SAX_message "EventPath: adding context node ", int \$ctx, " to postponement ", int \$p if is_tracing;
+  emit_trace_SAX_message "EventPath: adding context node ", _ev \$ctx, " to postponement ", _po \$p if is_tracing;
   \$ctx->{PostponementCount}++;
   push \@{\$p->[_p_contexts]}, \$ctx;
 }
 CODE_END
 
-            $context->{action_wrapper} = <<CODE_END;
+            local $context->{action_wrapper} = <<CODE_END;
 if ( <EXPR> ) {
-  emit_trace_SAX_message "EventPath: predicate postponement ", int \$postponement, " MATCHED!" if is_tracing;
-  local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
+  emit_trace_SAX_message "EventPath: predicate postponement ", _po \$postponement, " MATCHED!" if is_tracing;
   while ( my \$ctx = shift \@{\$postponement->[_p_contexts]} ) {
     \$ctx->{PostponementCount}--;
     <ACTION>}
@@ -1164,19 +1223,19 @@ local $f::indent = $f::indent + 1;
 ##            $postponement_init_code = <<CODE_END;
 ##my \$parent_postponement = \$postponement;
 ##\$postponement = [ \$parent_postponement ];
-##emit_trace_SAX_message "EventPath: creating postponement ", int \$postponement, " for predicate (non-leftmost) in event ", int \$ctx if is_tracing;
+##emit_trace_SAX_message "EventPath: creating postponement ", _po \$postponement, " for predicate (non-leftmost) in event ", _ev \$ctx if is_tracing;
 ##CODE_END
 ##
             _replace_NEXT $action_code, <<CODE_END;
 if ( \$postponement->[_p_contexts] ) {
   my \$parent_postponement = \$postponement->[_p_parent_postponement];
-  emit_trace_SAX_message "EventPath: moving context nodes from postponement ", int \$postponement, " to parent postponement ", int \$parent_postponement if is_tracing;
+  emit_trace_SAX_message "EventPath: moving context nodes from postponement ", _po \$postponement, " to parent postponement ", _po \$parent_postponement if is_tracing;
   push
     \@{\$parent_postponement->[_p_contexts]},
     splice \@{\$postponement->[_p_contexts]};
 }
 else {
-  emit_trace_SAX_message "EventPath: but no context nodes in postponement ", int \$postponement if is_tracing;
+  emit_trace_SAX_message "EventPath: but no context nodes in postponement ", _po \$postponement if is_tracing;
 }
 CODE_END
 
@@ -1187,11 +1246,11 @@ CODE_END
 ##  sub {
 ##    ## Called to see if a non-leftmost predicate matched
 ##    my ( \$ctx, \$parent_postponement, \$postponement ) = \@_;
-##    emit_trace_SAX_message "EventPath: checking postponement ", int \$postponement, " for predicate (non-leftmost)" if is_tracing;
+##    emit_trace_SAX_message "EventPath: checking postponement ", _po \$postponement, " for predicate (non-leftmost)" if is_tracing;
 ##warn \$postponement->[_p_first_precursor+0];
 ##    for my \$ctx ( \@{\$postponement->[_p_contexts]} ) {
 ##      \@{\$ctx->{Postponements}} = grep \$_ != \$postponement, \@{\$ctx->{Postponements}};
-##      emit_trace_SAX_message \@{\$ctx->{Postponements}} . " postponements left in event ", int \$ctx, ": (", join( ", ", map int \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
+##      emit_trace_SAX_message \@{\$ctx->{Postponements}} . " postponements left in event ", _ev \$ctx, ": (", join( ", ", map _ev \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
 ##    }
 ##$action_code  },
 ##  \$ctx,
@@ -1212,16 +1271,15 @@ CODE_END
         _indent $action_code if _indentomatic;
         $postponement_init_code = <<CODE_END;
 \$postponement = [ \$postponement ];  ## Refer to parent postponement, if present
-emit_trace_SAX_message "EventPath: creating expression postponement ", int \$postponement, " in event ", int \$ctx if is_tracing;
+emit_trace_SAX_message "EventPath: creating expression postponement ", _po \$postponement, " in event ", _ev \$ctx if is_tracing;
 \$ctx->{PostponementCount}++;
 push \@{\$ctx->{EndSubs}}, [
   sub {
     ## Called to calculate the postponed expression.
     my ( \$ctx, \$postponement ) = \@_;
-    emit_trace_SAX_message "EventPath: checking expression postponement ", int \$postponement, " in event ", int \$ctx if is_tracing;
-    local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
+    emit_trace_SAX_message "EventPath: checking expression postponement ", _po \$postponement, " in event ", _ev \$ctx if is_tracing;
     \$ctx->{PostponementCount}--;
-    emit_trace_SAX_message \$ctx->{PostponementCount} . " postponements left in event ", int \$ctx if is_tracing;
+    emit_trace_SAX_message \$ctx->{PostponementCount} . " postponements left in event ", _ev \$ctx if is_tracing;
 $action_code  },
   \$ctx,
   \$postponement
@@ -1675,7 +1733,7 @@ unless ( defined \$postponement->[_p_first_precursor+$precursor_number] ) { ## n
   if ( \$ctx->{EventType} eq "start_document"
     || \$ctx->{EventType} eq "start_element"
   ) {
-    emit_trace_SAX_message "EventPath: enabling text collection for precursor $precursor_number (postponement ", int \$postponement, ")" if is_tracing;
+    emit_trace_SAX_message "EventPath: enabling text collection for precursor $precursor_number (postponement ", _po \$postponement, ")" if is_tracing;
     nodeset2string_start( \$postponement, $precursor_number );
     ## If this is one branch of a union, we need to define this
     ## precursor so the other branch of the union won't also
@@ -2241,7 +2299,6 @@ sub _compile_relational_ops {
         eval <<CODE_END;
             sub ${class}::parm_type { "$_" }
             sub ${class}::as_immed_code {
-                \$DB::single = 1;
                 shift->build_expr( 2, 2, \$_[0], sub { "( \$_[0] $op \$_[1] )" } );
             }
 CODE_END
@@ -2409,28 +2466,7 @@ sub XFD::self_node::incr_code_template { "<NEXT>" }
 ##########
 @XFD::node_name::ISA = qw( XFD::PathTest );
 
-sub XFD::PathTest::_parse_ns_uri_and_localname {
-    my $self = shift;
-    my ( $name ) = @_;
-
-    my ( $prefix, $local_name ) =
-        $name =~ /(.*):(.*)/
-            ? ( $1, $2 )
-            : ( "", $name );
-
-    my $uri = exists $dispatcher->{Namespaces}->{$prefix}
-        ? $dispatcher->{Namespaces}->{$prefix}
-        : length $prefix
-            ? die "prefix '$prefix' not declared in Namespaces option\n"
-            : "";
-        
-    die "prefix '$prefix:' not defined in Namespaces option\n"
-        unless defined $uri;
-
-    return ( $uri, $local_name );
-}
-
-sub XFD::PathTest::_parse_and_jclarkify {
+sub XFD::node_name::_parse_and_jclarkify {
     my $self = shift;
     my ( $uri, $local_name ) = $self->_parse_ns_uri_and_localname( @_ );
     return "{$uri}$local_name";
@@ -2454,36 +2490,13 @@ sub XFD::node_name::possible_event_type_map { {
 
 sub XFD::node_name::useful_event_contexts { qw( start_element end_element attribute ) }
 
-sub XFD::_jclarkify_and_cmp {
-    ## NOT A METHOD.
-    my ( $ctx, $jclarked_name2 ) = @_;
-    my $data = $ctx->{Node};
-    my $jclarked_name1;
-
-    if (
-        exists $data->{NamespaceURI} && defined $data->{NamespaceURI} &&
-        exists $data->{LocalName}    && defined $data->{LocalName}
-    ) {
-        $jclarked_name1 = "{$data->{NamespaceURI}}$data->{LocalName}";
-    }
-    elsif ( exists $data->{Name} && defined $data->{Name} ) {
-        $jclarked_name1 = $data->{Name};
-    }
-    else {
-        ## Hmmm, warn here?
-        return -2;
-    }
-
-    return $jclarked_name1 cmp $jclarked_name2;
-}
-
 sub XFD::node_name::condition {
     my $self = shift;
     my ( $ctx_expr ) = @_;
 
     return defined $dispatcher->{Namespaces}
-       ? "_jclarkify_and_cmp( $ctx_expr, '$self->[0]' ) == 0"
-       : "exists $ctx_expr\->{Node}->{Name} && $ctx_expr\->{Node}->{Name} eq '$self->[0]'";
+       ? qq[do { my \$d = $ctx_expr\->{Node}; "{\$d->{NamespaceURI}}\$d->{LocalName}"} eq '$self->[0]' ]
+       : "$ctx_expr\->{Node}->{Name} eq '$self->[0]'";
 }
 
 sub XFD::node_name::incr_code_template {
@@ -2492,8 +2505,7 @@ sub XFD::node_name::incr_code_template {
 
     return <<CODE_END;
 if ( $cond ) {
-  emit_trace_SAX_message "EventPath: node name '", '$self->[0]', "' found" if is_tracing;
-  local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
+  emit_trace_SAX_message "EventPath: node name '$self->[0]' found" if is_tracing;
   <NEXT>}
 CODE_END
 }
@@ -2545,8 +2557,7 @@ sub XFD::namespace_test::incr_code_template {
 
     return <<CODE_END;
 if ( $cond ) {
-  emit_trace_SAX_message "EventPath: node namespace '", '$self->[0]', "' found" if is_tracing;
-  local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
+  emit_trace_SAX_message "EventPath: node namespace '$self->[0]' found" if is_tracing;
   <NEXT>}
 CODE_END
 }
@@ -2572,7 +2583,6 @@ sub XFD::any_node_name::incr_code_template { <<CODE_END }
 ## any node name
 if ( \$ctx->{EventType} eq "start_element" || \$ctx->{EventType} eq "attribute" ) {
   emit_trace_SAX_message "EventPath: node name '*' found" if is_tracing;
-  local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
   <NEXT>
 } # any node name
 CODE_END
@@ -2590,19 +2600,50 @@ sub XFD::union::add { push @{shift()}, @_ }
 
 sub XFD::union::set_next { $_->set_next( @_ ) for @{shift()} }
 
+## get_kids/set_kids is used by external code only, like the optimizer
+sub XFD::union::get_kids { @{shift()} }
+sub XFD::union::set_kids { my $self = shift; @$self = @_ }
+
+sub XFD::union::curry_tests {
+    my $self = shift;
+
+    my %tests;
+
+    for ( @$self ) {
+        for ( $_->curry_tests ) {
+            $tests{$_} = undef;
+        }
+    }
+
+    return keys %tests;
+}
+
+
+sub XFD::union::fixup {
+    my $self = shift;
+
+    ## Test this here because the optimizer *does* put unions in front
+    ## of things the user should not be able to do.
+
+    for ( @$self ) {
+        die
+"XPath's union operator ('|') doesn't work on a ", ref $_, ", perhaps 'or' is needed.\n"
+            unless $_->isa( "XFD::PathTest" );
+    }
+
+    $self->XFD::PathTest::fixup( @_ );
+}
+
+
 sub XFD::union::as_incr_code {
     my $self = shift;
 
+    return ""                             if @$self == 0;
     return $self->[0]->as_incr_code( @_ ) if @$self == 1;
 
     return join "",
-        map( {
-            $_->isa( "XFD::PathTest" )
-               ? ( "# union\n", $_->as_incr_code( @_ ) )
-               : die
-"XPath's union operator ('|') doesn't work on a ", ref $_, ", perhaps 'or' is needed.\n";
-        } @$self
-    ), "# end union\n" ;
+        map( ( "# union\n", $_->as_incr_code( @_ ) ), @$self ),
+        "# end union\n" ;
 }
 
 ##########
@@ -2690,12 +2731,20 @@ sub axis {
     $class =~ s/-/_/g;
     die "'$_[0]' is not a valid EventPath axis\n"
         unless $class->can( "new" );
-    return $class->new( @_ );
+    return $class->new;
 }
 
    @XFD::Axis::ISA = qw( XFD::PathTest );
 sub XFD::Axis::op_type { shift->XFD::Op::op_type . "::" }
 sub XFD::Axis::principal_event_type { "start_element" }
+
+## Axes have no parameters and are inherently foldable, so return the
+## type of the axis.  Axes that 
+sub XFD::Axis::optim_signature {
+    my $self = shift;
+    join "", ref $self, "(", $self->[_next]->curry_tests, ":", $self->principal_event_type, ")";
+}
+
 
 ##########
    @XFD::Axis::attribute::ISA = qw( XFD::Axis );
@@ -2741,7 +2790,6 @@ push \@{\$ctx->{ChildCtx}->{$curry_tests[0]}}, [ ## attribute::
   sub {
     my ( \$postponement ) = \@_;
     emit_trace_SAX_message "EventPath: in attribute \$ctx->{Node}->{Name}" if is_tracing;
-    local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
     <NEXT>
   },
   \$postponement,
@@ -2761,7 +2809,6 @@ CODE_END
     sub {
       my ( \$postponement ) = \@_;
       emit_trace_SAX_message "EventPath: in attribute" if is_tracing;
-      local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
       <NEXT>
     },
     \$postponement,
@@ -2780,11 +2827,13 @@ sub XFD::Axis::attribute::immed_code_template {
   ?
     <NEXT>
     map {
-      {
+      my \$ctx = {
         EventType => 'attribute',
-        Node     => \$_,
-        Parent   => \$ctx,
+        Node      => \$_,
+        Parent    => \$ctx,
       };
+      emit_trace_SAX_message "built attribute event ", _ev \$ctx if is_tracing;
+      \$ctx;
     } sort {
         ## Put attributes in a reproducable order, mostly for testing
         ## purposes.
@@ -2825,6 +2874,7 @@ sub XFD::Axis::child::incr_code_template {
         " can never match\n" unless @curry_tests;
 
     return <<CODE_END if @curry_tests == 1;
+## child::
 emit_trace_SAX_message "EventPath: queuing for child::" if is_tracing;
 push \@{\$ctx->{ChildCtx}->{$curry_tests[0]}}, [  ## child::
   sub {
@@ -2933,67 +2983,68 @@ CODE_END
 
 
 ##########
-   @XFD::Axis::end::ISA = qw( XFD::Axis );
-sub XFD::Axis::end::principal_event_type  { "start_element" }
-sub XFD::Axis::end::possible_event_type_map  { {
-    start_document => [qw( end_document )],
-    start_element  => [qw( end_element )],
-} }
-sub XFD::Axis::end::useful_event_contexts { qw( start_document start_element ) }
-
-sub XFD::Axis::end::as_incr_code {  ## not ..._template()!
-    my $self    = shift;
-    my ( $context ) = @_;
-
-    $self->check_context( $context );
-
-    ## This is the lengthy one, as it needs to curry itself
-    ## until the end element rolls around, while playing
-    ## nicely with postponements.
-
-    ## TODO: check how this interacts with nodeset-returning
-    ## paths.
-
-    local $context->{Axis} = $self->op_type;
-
-    local $context->{PrincipalEventType} = $self->principal_event_type;
-    local $context->{PossibleEventTypes} = [ $self->possible_event_types( @_ ) ];
-    local $context->{PossiblesSetBy} = $self;
-
-    if ( ! defined $context->{precursorize_action} ) {
-        ## There are no predicates to leftwards
-        local $context->{delay_to_end} = 1;
-
-        ## This is more like self:: than child::, no need to
-        ## wrap the next set of tests.
-        return $self->[_next]->as_incr_code( $context );
-    }
-    else {
-        ## There's a predicate to our left that's set the various
-        ## precursor... and action_wrapper, so dance with it...
-
-        ## the 'action' pushes the context on to the postponement's
-        ## list of contexts.  We want that to occur in the end_document.
-        my $action_code = <<CODE_END;
-push \@{\$ctx->{EndSubs}}, [ 
-  sub {
-    my ( \$ctx ) = \@_;
-    emit_trace_SAX_message "EventPath: running end::" if is_tracing;
-    <ACTION>
-  },
-  \$ctx
-];
-CODE_END
-
-        _replace_NEXT $action_code, $context->{precursorize_action}, "<ACTION>";
-
-        local $context->{precursorize_action} = $action_code;
-
-        return $self->[_next]->as_incr_code( $context );
-    }
-}
-
-
+   @XFD::Axis::end::ISA = qw( XFD::Axis::end_element );
+#   @XFD::Axis::end::ISA = qw( XFD::Axis );
+#sub XFD::Axis::end::principal_event_type  { "start_element" }
+#sub XFD::Axis::end::possible_event_type_map  { {
+#    start_document => [qw( end_document )],
+#    start_element  => [qw( end_element )],
+#} }
+#sub XFD::Axis::end::useful_event_contexts { qw( start_document start_element ) }
+#
+#sub XFD::Axis::end::as_incr_code {  ## not ..._template()!
+#    my $self    = shift;
+#    my ( $context ) = @_;
+#
+#    $self->check_context( $context );
+#
+#    ## This is the lengthy one, as it needs to curry itself
+#    ## until the end element rolls around, while playing
+#    ## nicely with postponements.
+#
+#    ## TODO: check how this interacts with nodeset-returning
+#    ## paths.
+#
+#    local $context->{Axis} = $self->op_type;
+#
+#    local $context->{PrincipalEventType} = $self->principal_event_type;
+#    local $context->{PossibleEventTypes} = [ $self->possible_event_types( @_ ) ];
+#    local $context->{PossiblesSetBy} = $self;
+#
+#    if ( ! defined $context->{precursorize_action} ) {
+#        ## There are no predicates to leftwards
+#        local $context->{delay_to_end} = 1;
+#
+#        ## This is more like self:: than child::, no need to
+#        ## wrap the next set of tests.
+#        return $self->[_next]->as_incr_code( $context );
+#    }
+#    else {
+#        ## There's a predicate to our left that's set the various
+#        ## precursor... and action_wrapper, so dance with it...
+#
+#        ## the 'action' pushes the context on to the postponement's
+#        ## list of contexts.  We want that to occur in the end_document.
+#        my $action_code = <<CODE_END;
+#push \@{\$ctx->{EndSubs}}, [ 
+#  sub {
+#    my ( \$ctx ) = \@_;
+#    emit_trace_SAX_message "EventPath: running end::" if is_tracing;
+#    <ACTION>
+#  },
+#  \$ctx
+#];
+#CODE_END
+#
+#        _replace_NEXT $action_code, $context->{precursorize_action}, "<ACTION>";
+#
+#        local $context->{precursorize_action} = $action_code;
+#
+#        return $self->[_next]->as_incr_code( $context );
+#    }
+#}
+#
+#
 ##########
    @XFD::Axis::end_document::ISA = qw( XFD::Axis );
 sub XFD::Axis::end_document::principal_event_type { "end_document" }
@@ -3001,6 +3052,16 @@ sub XFD::Axis::end_document::possible_event_type_map { {
     start_document => [qw( end_document )],
 } }
 sub XFD::Axis::end_document::useful_event_contexts { qw( start_document ) }
+
+sub XFD::Axis::end_document::fixup {
+    my $self    = shift;
+    my ( $context ) = @_;
+
+    ## There are no predicates to leftwards
+    local $context->{DelayToEnd} = 1;
+    $self->XFD::Axis::fixup( @_ );
+}
+
 
 sub XFD::Axis::end_document::as_incr_code {  ## not ..._template()!
     my $self    = shift;
@@ -3022,9 +3083,6 @@ sub XFD::Axis::end_document::as_incr_code {  ## not ..._template()!
     local $context->{PossiblesSetBy} = $self;
 
     if ( ! defined $context->{precursorize_action} ) {
-        ## There are no predicates to leftwards
-        local $context->{delay_to_end} = 1;
-
         ## This is more like self:: than child::, no need to
         ## wrap the next set of tests.
         return $self->[_next]->as_incr_code( $context );
@@ -3032,6 +3090,12 @@ sub XFD::Axis::end_document::as_incr_code {  ## not ..._template()!
     else {
         ## There's a predicate to our left that's set the various
         ## precursor... and action_wrapper, so dance with it...
+
+        ## The assumption made in the fixup phase is invalid; we
+        ## now need to queue an EndSub instead of putting the
+        ## action right in to PendingEndActions so that the
+        ## postponement can be tested.
+        local $context->{IgnoreDelayToEnd} = 1;
 
         ## the 'action' pushes the context on to the postponement's
         ## list of contexts.  We want that to occur in the end_document.
@@ -3061,6 +3125,22 @@ sub XFD::Axis::end_element::possible_event_type_map { {
     start_element => [qw( end_element )],
 } }
 sub XFD::Axis::end_element::useful_event_contexts { qw( start_document start_element ) }
+
+sub XFD::Axis::end_element::fixup {
+    my $self    = shift;
+    my ( $context ) = @_;
+
+    ## Tell the Action that it should delay itself to the end_... event
+    ## by using PendingEndActions.  This gets overridden in the compile
+    ## phase by setting IgnoreDelayToEnd if need be.
+    ##
+    ## Doing this here facilitates optimizing end:: into child:: in
+    ## certain cases.
+    local $context->{DelayToEnd} = 1;
+    $self->XFD::Axis::fixup( @_ );
+}
+
+
 sub XFD::Axis::end_element::as_incr_code {  ## not ..._template()!
     my $self    = shift;
     my ( $context ) = @_;
@@ -3088,19 +3168,16 @@ sub XFD::Axis::end_element::as_incr_code {  ## not ..._template()!
     if ( ! defined $context->{precursorize_action} ) {
         ## There are no predicates to leftwards
 
-        local $context->{delay_to_end} = 1;
-
         my $code = <<CODE_END;
-{ ## end_element::
-  emit_trace_SAX_message "EventPath: queuing for end_element::" if is_tracing;
-  push \@{\$ctx->{ChildCtx}->{start_element}}, [
-    sub {
-      my ( \$postponement ) = \@_;
-      <NEXT>
-    },
-    \$postponement
-  ];
-} # end_element::
+## end_element::
+emit_trace_SAX_message "EventPath: queuing for end_element::" if is_tracing;
+push \@{\$ctx->{ChildCtx}->{start_element}}, [
+  sub {
+    my ( \$postponement ) = \@_;
+    <NEXT>
+  },
+  \$postponement
+];
 CODE_END
 
         _replace_NEXT $code, $self->[_next]->as_incr_code( $context );
@@ -3109,6 +3186,15 @@ CODE_END
     else {
         ## There's a predicate to our left that's set the various
         ## precursor... and action_wrapper, so dance with it...
+
+        ## The assumption made in the fixup phase is invalid; we
+        ## now need to queue an EndSub instead of putting the
+        ## action right in to PendingEndActions so that the
+        ## postponement can be tested.
+        ## TODO: see if we can move the detection of precursors in to
+        ## the fixup phase so we can avoid setting IgnoreDelayToEnd
+        ## in that case.
+        local $context->{IgnoreDelayToEnd} = 1;
 
         ## the 'action' pushes the context on to the postponement's
         ## list of contexts.  We want that to occur in the end_element.
@@ -3127,16 +3213,15 @@ CODE_END
         local $context->{precursorize_action} = $action_code;
 
         my $code = <<CODE_END;
-{ ## end_element::
-  emit_trace_SAX_message "EventPath: queuing for end_element::" if is_tracing;
-  push \@{\$ctx->{ChildCtx}->{start_element}}, [
-    sub {
-      my ( \$postponement ) = \@_;
-      <NEXT>
-    },
-    \$postponement
-  ];
-} # end_element::
+emit_trace_SAX_message "EventPath: queuing for end_element::" if is_tracing;
+push \@{\$ctx->{ChildCtx}->{start_element}}, [
+  sub {
+    my ( \$postponement ) = \@_;
+    <NEXT>
+  },
+  \$postponement
+];
+# end_element::
 CODE_END
 
         _replace_NEXT $code, $self->[_next]->as_incr_code( $context );
@@ -3154,14 +3239,15 @@ sub XFD::Axis::self::possible_node_types { () } ## () means "all".
 sub XFD::Axis::self::incr_code_template { "<NEXT>" }
 
 ##########
-   @XFD::Axis::start::ISA = qw( XFD::Axis );
-sub XFD::Axis::start::principal_event_type { "start_element" }
-sub XFD::Axis::start::possible_event_type_map { {
-    start_document => [qw( start_document )],
-    start_element  => [qw( start_element  )],
-} }
-sub XFD::Axis::start::useful_event_contexts {qw( start_document start_element )}
-sub XFD::Axis::start::incr_code_template { "<NEXT>" }
+   @XFD::Axis::start::ISA = qw( XFD::Axis::start_element );
+#   @XFD::Axis::start::ISA = qw( XFD::Axis );
+#sub XFD::Axis::start::principal_event_type { "start_element" }
+#sub XFD::Axis::start::possible_event_type_map { {
+#    start_document => [qw( start_document )],
+#    start_element  => [qw( start_element  )],
+#} }
+#sub XFD::Axis::start::useful_event_contexts {qw( start_document start_element )}
+#sub XFD::Axis::start::incr_code_template { "<NEXT>" }
 
 ##########
    @XFD::Axis::start_document::ISA = qw( XFD::Axis );
@@ -3265,7 +3351,6 @@ sub XFD::EventType::principal_event_type::incr_code_template {
 ## possible event types: @possible_event_types
 if ( \$ctx->{EventType} eq "$desired_event_type" ) {
   emit_trace_SAX_message "EventPath: principal event type $desired_event_type found" if is_tracing;
-    local \$Devel::TraceCalls::nesting_level = \$Devel::TraceCalls::nesting_level + 1 if is_tracing;
   <NEXT>
 } # ::*
 CODE_END
@@ -3284,5 +3369,34 @@ CODE_END
 #X
 #X    return qq{\$ctx->{EventType} eq "$desired_event_type" ? <NEXT> : ()};
 #X}
+
+###############################################################################
+##
+## Optimizer Ops
+##
+## The optimizer rearranges and tears apart the op tree in to multiple
+## trees.  Those trees need to be compiled a bit differently and 
+## need to create a suitable compiletime environment for their children.
+##
+
+##########
+   @XFD::Optim::EveryStartElement::ISA = qw( XFD::union );
+sub XFD::Optim::EveryStartElement::possible_event_types { qw( start_element ) }
+sub XFD::Optim::EveryStartElement::as_incr_code {
+    my $self = shift;
+    my ( $context ) = @_;
+    local $context->{PossibleEventTypes} = [qw( start_element )];
+    $self->XFD::union::as_incr_code( @_ );
+}
+
+##########
+   @XFD::Optim::EveryAttribute::ISA = qw( XFD::union );
+sub XFD::Optim::EveryAttribute::possible_event_types { qw( start_element ) }
+sub XFD::Optim::EveryAttribute::as_incr_code {
+    my $self = shift;
+    my ( $context ) = @_;
+    local $context->{PossibleEventTypes} = [qw( attribute )];
+    $self->XFD::union::as_incr_code( @_ );
+}
 
 1;

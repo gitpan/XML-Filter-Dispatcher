@@ -1,5 +1,20 @@
 CHANGES file for XML::Filter::Dispatcher
 
+0.5 Mon May 26 03:38:46 EDT 2003
+    - Optimizer speeds some common cases drastically
+    - more efficient code
+    - end:: is now a nickname for end-element::, the old meaning
+      was too confusing and awkward.
+    - start:: is now a nickname for start-element::, the old meaning
+      was too confusing and awkward.
+    - Misc. bugfixes
+
+0.48
+    - xset() now tracks the name of what was set to avoid setting anything
+      twice instead of checking definedness.
+    - added xstack_max()
+    - Remove abandoned debug code.
+
 0.47 Mon Jan 27 15:21:37 EST 2003
     - Rebuild with a new (1.05) Parse::Yapp so that X:F:D:Parser is not
     advertising a 1.02 $VERSION due to the VERSION of Parse::Yapp being

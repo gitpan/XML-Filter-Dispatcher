@@ -69,7 +69,7 @@ sub {
 #            Debug => 1,
         )
     );
-#use Data::Dumper; warn Dumper( $h );
+#use BFD;d$h;
     ok ref $h, "HASH";
 },
 @ab_tests,

@@ -41,7 +41,7 @@ sub {
             ## And here's where we return the root object
             '/end-element::*' => sub { xpop },
         ],
-#        Debug => 1,
+#        Debug => 2,
     ) );
     ok ref $h, "HASH";
 },

@@ -488,18 +488,16 @@ sub { d $aaaacb,  '//a[b]//a[c]//a',                                 [ 'a', 'a' 
 ## SAX axes
 
 sub { d $ab,      '/end-document::*',                                [ '' ]                  },
-sub { d $ab,      '/end::node()',                                    [ '' ]                  },
 sub { d $ab,      '/a/end-element::b',                               [ 'b' ]                 },
-sub { d $ab,      '/a/b/end::*',                                     [ 'b' ]                 },
+sub { d $ab,      '/a/end::b',                                       [ 'b' ]                 },
 sub { d $ab,      '/a[b]/end-element::b',                            [ 'b' ]                 },
 sub { d $abcdBcd, '/a[b]/end-element::b',                            [ 'b' ]                 },
 sub { d $abcdBcd, '/a[b]/end-element::B',                            [ 'B' ]                 },
 sub { d $abcdBcd, '/a[B]/end-element::b',                            [ 'b' ]                 },
 
 sub { d $ab,      '/a/start-element::b',                             [ 'b' ]                 },
-sub { d $ab,      '/a/b/start::*',                                   [ 'b' ]                 },
+sub { d $ab,      '/a/start::b',                                     [ 'b' ]                 },
 sub { d $ab,      '/start-document::*',                              [ '' ]                  },
-sub { d $ab,      '/start::node()',                                  [ '' ]                  },
 
 ## Namespace tests
 sub { d $ns,   'local-name(a)',                                    [ '_a' ],

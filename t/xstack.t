@@ -15,7 +15,6 @@ BEGIN { $has_graph = eval "require Graph;" ? 1 : 0 }
 
 plan tests => 16 + $has_graph * 2 * 2;
 
-
 {
     my $d = XML::Filter::Dispatcher->new(
         Rules => [
@@ -123,7 +122,7 @@ END_XML
     my $expected = Graph->new->add_cycle( 1, 2 )->add_vertex( 0 );
 
     ok $got, $expected;
-    ok $got->complete;
+    ok $got && $got->complete;
 }
 
 ###############################################################################

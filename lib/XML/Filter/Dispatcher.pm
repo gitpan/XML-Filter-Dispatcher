@@ -1,6 +1,6 @@
 package XML::Filter::Dispatcher ;
 
-$VERSION = 0.47;
+$VERSION = 0.50;
 
 =head1 NAME
 
@@ -52,7 +52,7 @@ A rule is composed of a pattern and an action.  Each
 XML::Filter::Dispatcher instance has a list of rules.  As SAX events are
 received, the rules are evaluated and one rule's action is executed.  If
 more than one rule matches an event, the rule with the highest score
-wins; by default a rule's score is it's position in the rule list, so
+wins; by default a rule's score is its position in the rule list, so
 the last matching rule the list will be acted on.
 
 A simple rule list looks like:
@@ -68,7 +68,7 @@ There are several types of actions:
 
 =over
 
-=item o
+=item *
 
 CODE reference
 
@@ -77,7 +77,7 @@ CODE reference
         'b' => sub { print "got a <b>!\n" },
     ],
 
-=item o
+=item *
 
 SAX handler
 
@@ -87,7 +87,7 @@ SAX handler
         'b' => $h2,    ## Another handler
     ],
 
-=item o
+=item *
 
 undef
 
@@ -98,7 +98,7 @@ undef
 
 Useful for preventing other actions for some events
 
-=item o
+=item *
 
 Perl code
 
@@ -507,14 +507,14 @@ support (tho it be in an XSLT framework) or wait for
 L<XML::TWIG|XML::TWIG> to grow SAX support.
 
 Rather than build a DOM, XML::Filter::Dispatcher only keeps a bare
-minimum of nodes: the current node and it's parent, grandparent, and so
+minimum of nodes: the current node and its parent, grandparent, and so
 on, up to the document ("root") node (basically the /ancestor-or-self::
 axis).  This is called the "context stack", although you may not need to
 know that term unless you delve in to the guts.
 
 =head3 EventPath Truth
 
-EventPath borrows a lot from XPath including it's notion of truth.
+EventPath borrows a lot from XPath including its notion of truth.
 This is different from Perl's notion of truth; presumably to make
 document processing easier.  Here's a table that may help, the
 important differences are towards the end:
@@ -629,7 +629,7 @@ require Exporter;
 
 BEGIN {
     my @general_API   = qw( xvalue xvaluetype xrun_next_action );
-    my @xstack_API = qw( xpeek xpop xadd xset xoverwrite xpush xstack_empty );
+    my @xstack_API = qw( xpeek xpop xadd xset xoverwrite xpush xstack_empty xstack_max );
     my @variables_API = qw( xset_var xget_var );
     @EXPORT_OK = ( @general_API, @variables_API, @xstack_API );
     %EXPORT_TAGS = (
@@ -644,7 +644,9 @@ BEGIN {
 
 use strict ;
 
-use Carp ;
+use Carp qw( confess );
+sub croak { goto &Carp::confess }
+
 #use XML::SAX::Base;
 use XML::Filter::Dispatcher::Parser;
 #use XML::NamespaceSupport;
@@ -725,6 +727,8 @@ sub new {
 
     }
 
+    $self->{Debug} ||= $ENV{XFDDEBUG} || 0;
+
     $self->{Rules} ||= [];
     $self->{Rules} = [ %{$self->{Rules}} ]
         if ref $self->{Rules} eq "HASH";
@@ -763,24 +767,68 @@ sub new {
         }
     }
 
-    return $self unless @{$self->{OpTree} || []};
+    if ( $self->{OpTree} ) {
+        $self->{OpTree}->fixup( {} );
 
-    $self->{OpTree}->fixup( {} );
-    if ( ( $self->{Debug} || 0 ) > 1 ) {
-        open F, ">foo.png";
-        print F $self->{OpTree}->as_graphviz->as_png;
-        close F;
-        system( "ee foo.png" );
-    }
+        $self->_optimize
+            unless defined $ENV{XFDOPTIMIZE} && ! $ENV{XFDOPTIMIZE}
+            || defined $self->{Optimize} && ! $self->{Optimize};
 
-    my $code = $self->{OpTree}->as_incr_code( {
-        FoldConstants => $self->{FoldConstants},
-    } );
+        if ( $self->{Debug} > 1 ) {
+            my $g = $self->{OpTree}->as_graphviz;
+            $self->{EveryElementOpTree}->as_graphviz( $g )
+                if $self->{EveryElementOpTree};
+            $self->{EveryAttributeOpTree}->as_graphviz( $g )
+                if $self->{EveryAttributeOpTree};
 
-    XFD::_indent $code if XFD::_indentomatic();
+            open F, ">foo.png";
+            print F $g->as_png;
+            close F;
+            system( "ee foo.png" );
+        }
 
-    local $" = "\n";
-    $code = <<CODE_END;
+        my $code = $self->{OpTree}->as_incr_code( {
+            FoldConstants => $self->{FoldConstants},
+        } );
+
+        if ( $self->{EveryElementOpTree} ) {
+
+            my $c = $self->{EveryElementOpTree}->as_incr_code( {
+                FoldConstants => $self->{FoldConstants},
+            } );
+
+            if ( XFD::_indentomatic() || $self->{Debug} ) {
+                XFD::_indent $c;
+            }
+
+            $code .= <<CODE_END if $self->{EveryElementOpTree};
+\$self->{OncePerElementSub} = sub {
+  my ( \$d, \$postponement ) = \@_;
+$c}; ## end OncePerElementSub
+CODE_END
+        }
+
+        if ( $self->{EveryAttributeOpTree} ) {
+
+            my $c = $self->{EveryAttributeOpTree}->as_incr_code( {
+                FoldConstants => $self->{FoldConstants},
+            } );
+
+            if ( XFD::_indentomatic() || $self->{Debug} ) {
+                XFD::_indent $c;
+            }
+
+            $code .= <<CODE_END if $self->{EveryAttributeOpTree};
+\$self->{OncePerAttributeSub} = sub {
+  my ( \$d, \$postponement ) = \@_;
+$c}; ## end OncePerAttributeSub
+CODE_END
+        }
+
+        XFD::_indent $code if XFD::_indentomatic();
+
+        local $" = "\n";
+        $code = <<CODE_END;
 package XFD;
 
 use XML::Filter::Dispatcher::Runtime;
@@ -793,28 +841,245 @@ sub {
   my ( \$d, \$postponement ) = \@_;
 $code};
 CODE_END
+        if ( $self->{Debug} ) {
+            my $c = $code;
+            my $ln = 1;
+            $c =~ s{^}{sprintf "%4d|", $ln++}gme;
+            warn $c;
+        }
 
-    if ( $self->{Debug} ) {
-        my $c = $code;
-        my $ln = 1;
-        $c =~ s{^}{sprintf "%4d|", $ln++}gme;
-        warn $c;
+        my $sub = eval $code;
+        if ( ! $sub ) {
+            my $c = $code;
+            my $ln = 1;
+            $c =~ s{^}{sprintf "%4d|", $ln++}gme;
+            die $@, $c;
+        }
+
+        ## The "[]" is the postponement record to pass in.
+        push @{$doc_ctx->{start_document}}, [ $sub, $self, [] ];
     }
-
-    ## TODO: move this eval out of the loop.
-    my @subs = eval $code;
-    if ( $@ ) {
-        my $c = $code;
-        my $ln = 1;
-        $c =~ s{^}{sprintf "%4d|", $ln++}gme;
-        die $@, $c;
-    }
-
-    ## The "[]" is the postponement record to pass in.
-    push @{$doc_ctx->{start_document}}, map [ $_, $self, [] ], @subs;
 
     return $self ;
 }
+
+
+## This is a series of subs that call from the main sub down to each
+## of the child subs.
+sub _optimize {
+    my $self = shift;
+
+    @{$self->{OpTree}} = map $self->_optimize_rule( $_ ), @{$self->{OpTree}};
+
+    for ( $self->{OpTree}, $self->{EveryElementOpTree} ) {
+        $_ = $self->_combine_common_leading_ops( $_ )
+            if $_;
+    }
+}
+
+
+sub _optimize_rule {
+    my $self = shift;
+    my ( $rule ) = @_;
+
+    unless ( $rule->isa( "XFD::Rule" ) ) {
+        warn "Odd: found a ",
+            $rule->op_type,
+            " and not a Rule as a top level Op code\n";
+        return $rule;
+    }
+
+    my $n = $rule->get_next;
+
+    my @kids = $n->isa( "XFD::union" )
+        ? map $self->_optimize_rule_kid( $_ ), $n->get_kids
+        : ( $self->_optimize_rule_kid( $n ) );
+
+    ## Capture any optimized code trees in to unions to make codegen easier.
+    $self->{EveryElementOpTree} = XFD::Optim::EveryStartElement->new(
+        @{$self->{EveryElementOpTree}}
+    ) if $self->{EveryElementOpTree};
+
+    ## Capture any optimized code trees in to unions to make codegen easier.
+    $self->{EveryAttributeOpTree} = XFD::Optim::EveryAttribute->new(
+        @{$self->{EveryAttributeOpTree}}
+    ) if $self->{EveryAttributeOpTree};
+
+    return () unless @kids;
+    $rule->force_set_next(
+        @kids == 1
+            ? shift @kids
+            : XFD::union->new( @kids )
+    );
+
+    return $rule;
+}
+
+
+sub _optimize_rule_kid {
+    my $self = shift;
+    my ( $op ) = @_;
+
+    if ( $op->isa( "XFD::doc_node" ) ) {
+        my $kid = $op->get_next;
+
+        if ( $kid->isa( "XFD::union" ) ) {
+            $kid->set_kids( map
+                $self->_optimize_doc_node_kid( $_ ),
+                $kid->get_kids
+            );
+            return $kid->get_kids ? $op : ();
+        }
+        else {
+            $op->force_set_next( $self->_optimize_doc_node_kid( $kid ) );
+            return $op->get_next ? $op: ();
+        }
+    }
+
+    return $op;
+}
+
+
+sub _optimize_doc_node_kid {
+    my $self = shift;
+    my ( $op ) = @_;
+
+    if ( $op->isa( "XFD::Axis::descendant_or_self" ) ) {
+        my $kid = $op->get_next;
+
+        if ( $kid->isa( "XFD::union" ) ) {
+            $kid->set_kids( map
+                $self->_optimize_doc_node_desc_or_self_kid( $_ ),
+                $kid->get_kids
+            );
+            return $kid->get_kids ? $op : ();
+        }
+        else {
+            $op->force_set_next(
+                $self->_optimize_doc_node_desc_or_self_kid( $kid )
+            );
+            return $op->get_next ? $op : ();
+        }
+    }
+
+    return $op;  ## return it unchanged.
+}
+
+
+sub _optimize_doc_node_desc_or_self_kid {
+    my $self = shift;
+    my ( $op ) = @_;
+
+    if ( $op->isa( "XFD::EventType::node" ) ) {
+        my $kid = $op->get_next;
+        if ( $kid->isa( "XFD::union" ) ) {
+            $kid->set_kids(
+                map
+                    $self->_optimize_doc_node_desc_or_self_node_kid( $_ ),
+                    $kid->get_kids
+            );
+            return $op->get_kids ? $op : ();
+        }
+        else {
+            $op->force_set_next(
+                $self->_optimize_doc_node_desc_or_self_node_kid( $kid )
+            );
+            return $op->get_next ? $op : ();
+        }
+    }
+
+    return $op;
+}
+
+
+sub _optimize_doc_node_desc_or_self_node_kid {
+    my $self = shift;
+    my ( $op ) = @_;
+
+    if ( $op->isa( "XFD::Axis::end_element" ) ) {
+        ## By now, the fixup phase has made end:: replaceable by child::
+        ## when there are no precursors before it.  We know there are
+        ## no precursors before it at this point in the optimizer because
+        ## there are no path segments to our left.  Converting it to
+        ## a child:: element will make us able to combine the end::foo tests
+        ## with child::foo later.
+        
+        ## CHEAT: we know that end:: and child:: have the same internal
+        ## structure, so reblessing is ok.
+        bless $op, "XFD::Axis::child";
+    }
+
+    if ( $op->isa( "XFD::Axis::child" ) ) {
+        my $kid = $op->get_next;
+        if ( $kid->isa( "XFD::node_name" ) ) {
+            ## The path is like "A" or "//A": optimize this to a special
+            ## composite opcode that is run directly by start_element().
+
+            push @{$self->{EveryElementOpTree}}, $kid;
+            return ();
+        }
+    }
+    elsif ( $op->isa( "XFD::Axis::attribute" ) ) {
+        my $kid = $op->get_next;
+        if ( $kid->isa( "XFD::node_name" ) ) {
+            ## The path is like "@A" or "//@A": optimize this to a special
+            ## composite opcode that is run directly by start_element().
+
+            push @{$self->{EveryAttributeOpTree}}, $kid;
+            return ();
+        }
+    }
+
+    return $op;
+}
+
+sub _combine_common_leading_ops {
+    my $self = shift;
+    my ( $op ) = @_;
+
+    Carp::confess unless $op;
+
+    return $op
+        if $op->isa( "XFD::Action" );
+
+    if ( $op->isa( "XFD::union" ) ) {
+        my %kids;
+        for ( $op->get_kids ) {
+            push @{$kids{$_->optim_signature}}, $_;
+        }
+
+        for ( values %kids ) {
+            ## TODO: deal with unions inside unions.
+            if ( @$_ > 1 && $_->[0]->can( "force_set_next" ) ) {
+                $_->[0]->force_set_next(
+                    XFD::union->new( map $_->get_next, @$_ )
+                );
+                splice @$_, 1;
+            }
+        }
+
+        ## The sort() is just to get stable ordering so thate
+        ## it's easy to reproduce bugs.
+        $op->set_kids(
+            map $self->_combine_common_leading_ops( $_ ),
+            map @{$kids{$_}}, sort keys %kids
+        );
+
+        return ($op->get_kids)[0] if $op->get_kids == 1;
+    }
+    else {
+        ## TODO: Find these ops and optimize them too.  One is
+        ## XFD::SubRules.
+        return $op unless $op->can( "force_set_next" );
+
+        $op->force_set_next(
+            $self->_combine_common_leading_ops( $op->get_next )
+        );
+    }
+
+    return $op;
+}
+
 
 =item xvalue
 
@@ -1208,7 +1473,7 @@ do a single rule instead of the three we show above:
 =over
 
 =item xpush
-    
+
 Push values on to the xstack.  These will be removed from the xstack at
 the end of the current element.  The topmost item on the
 xstack is available through the peek method.  Elements xpushed before
@@ -1224,7 +1489,7 @@ can be used to retrieve them.
 sub xpush {
     local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
     emit_trace_SAX_message "EventPath: xpush()ing ", @_ if is_tracing;
-    push @{$XFD::cur_self->{XStack}}, @_;
+    push @{$XFD::cur_self->{XStack}}, map( { "#elt" => $_ }, @_ );
 }
 
 =item xadd
@@ -1284,20 +1549,23 @@ sub xadd {
     my $new_item = @_ ? shift : $XFD::cur_self->xvalue;
 
     emit_trace_SAX_message "EventPath: xadd()ing ", $name, " => ", $new_item if is_tracing;
-    local $Devel::TraceCalls::nesting_level = $Devel::TraceCalls::nesting_level + 1 if is_tracing;
 
     if ( @{$XFD::cur_self->{XStack}} ) {
-        my $top = $XFD::cur_self->xpeek;
+        my $e = $XFD::cur_self->{XStack}->[-1];
+        my $top = $e->{"#elt"};
         my $t = ref $top;
         my $meth;
 
         if ( $t eq "" ) {
-            $XFD::cur_self->{XStack}->[-1] .= ""; 
+            $XFD::cur_self->{XStack}->[-1]->{"#elt"} .= ""; 
+            $e->{scalar}++;
         }
         elsif ( $t eq "SCALAR" ) {
+            $e->{scalar}++;
             $$top .= ""; 
         }
         elsif ( $t eq "ARRAY" ) {
+            $e->{scalar}++;
             push @$top, $new_item;
         }
         elsif ( $t eq "HASH" ) {
@@ -1312,6 +1580,7 @@ sub xadd {
                 ", not an ARRAY ref"
                 if defined $top->{$name} && ! ref $top->{$name};
             push @{$top->{$name}}, $new_item;
+            $e->{$name}++;
         }
         ## See if it's a blessed object that can add thingamies"
         elsif ( $meth = ( 
@@ -1320,9 +1589,10 @@ sub xadd {
             || UNIVERSAL::can( $top, "add" )
         ) ) {
             $top->$meth( $new_item );
+            $e->{$name}++;
         }
         else {
-            croak "don't know how to xadd a '",
+            croak "don't know how to xadd() a '",
                 ref( $new_item ) || "scalar", 
                 "' ",
                 defined $name ? $name : "item",
@@ -1331,7 +1601,8 @@ sub xadd {
 
     }
 
-    $XFD::cur_self->xpush( $new_item );
+    $XFD::cur_self->xpush( $new_item )
+        if ref $new_item && ref $new_item ne "SCALAR";
     return $new_item;
 }
 
@@ -1354,11 +1625,11 @@ does this:
 
 Trying to xset any other types results in an exception.
 
-After the above action, an
+After the above action (except when the top is a scalar or SCALAR ref), an
 
     xpush $new_item;
 
-is done.
+is done so that more may be added to the item.
 
 $name defaults to the LocalName of the current node if it is an
 attribute or element, so
@@ -1370,8 +1641,6 @@ when handling other event types.
 
 If no parameters are provided, xvalue is used.
 
-If the stack is empty, it just xpush()es on the stack.
-
 =cut
 
 sub xset {
@@ -1382,7 +1651,7 @@ sub xset {
             croak "$XFD::ctx->{EventType} has no LocalName"
                 unless exists $XFD::ctx->{Node}->{LocalName}
                        && defined exists $XFD::ctx->{Node}->{LocalName};
-            croak "$XFD::ctx->{EventType} a LocalName of ''"
+            croak "$XFD::ctx->{EventType} has a LocalName of ''"
                 unless length $XFD::ctx->{Node}->{LocalName};
             $XFD::ctx->{Node}->{LocalName};
         };
@@ -1390,48 +1659,48 @@ sub xset {
 
     my $new_item = @_ ? shift : $XFD::cur_self->xvalue;
     emit_trace_SAX_message "EventPath: xset()ing ", $name, " => ", $new_item if is_tracing;
-    local $Devel::TraceCalls::nesting_level = $Devel::TraceCalls::nesting_level + 1 if is_tracing;
 
-    if ( @{$XFD::cur_self->{XStack}} ) {
-        my $top = $XFD::cur_self->xpeek;
+    unless ( @{$XFD::cur_self->{XStack}} ) {
+        $XFD::cur_self->xpush( $new_item );
+    }
+    else {
+        my $e = $XFD::cur_self->{XStack}->[-1];
+        my $top = $e->{"#elt"};
         my $t = ref $top;
         my $meth;
-        my $was_set;
+
         if ( $t eq "" ) {
-            croak "scalar on top of xstack is already defined"
-                if defined $top;
-            $XFD::cur_self->{XStack}->[-1] = $new_item; 
+            croak "already xset() scalar on top of xstack"
+                if $e->{scalar}++;
+            $e->{"#elt"} = $new_item; 
         }
         elsif ( $t eq "SCALAR" ) {
-            croak "SCALAR reference on top of xstack is already defined"
-                if defined $$top;
+            croak "already xset() SCALAR reference on top of xstack"
+                if $e->{scalar}++;
             $$top = $new_item; 
         }
         elsif ( $t eq "HASH" ) {
-            croak "$name is already defined in HASH on top of xstack"
-                if defined $top->{$name};
+            croak "already xset() element '$name' of HASH on top of xstack"
+                if $e->{$name}++;
             $top->{$name} = $new_item;
         }
         ## See if it's a blessed object that can add thingamies"
-        elsif ( $meth = UNIVERSAL::can( $top, $name ) ) {
-            croak "$name is already defined in ", ref $top, " on top of xstack"
-                if defined $top->$meth;
+        elsif (
+            ( $meth = UNIVERSAL::can( $top, $name ) )
+            || ( $meth = UNIVERSAL::can( $top, "set_$name" ) )
+        ) {
+            croak "already xset() accessor $name() of ", ref $top, " on top of xstack"
+                if $e->{$name}++;
             $top->$meth( $new_item );
         }
         else {
-            croak "don't know how to xset a '$t' (which is what is on the top of the xstack)";
+            croak "don't know how to xset() $name for a '$t' (which is what is on the top of the xstack)";
         }
 
-        croak
-            "Already set ",
-            defined $name ? "'$name'" : "value",
-            " in ",
-            $t ? "scalar" : "$t ref",
-            " on top of xstack"
-            if $was_set;
+        $XFD::cur_self->xpush( $new_item )
+            if ref $new_item && ref $new_item ne "SCALAR";
     }
 
-    $XFD::cur_self->xpush( $new_item );
     return $new_item;
 }
 
@@ -1443,7 +1712,7 @@ Exactly like xset but does not complain if the value has already been
 xadd(), xset() or xoverwrite().
 
 =cut
-    
+
 sub xoverwrite {
     local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
     my $name = @_ > 1
@@ -1460,31 +1729,43 @@ sub xoverwrite {
 
     my $new_item = @_ ? shift : $XFD::cur_self->xvalue;
     emit_trace_SAX_message "EventPath: xoverwrite()ing ", $name, " => ", $new_item if is_tracing;
-    local $Devel::TraceCalls::nesting_level = $Devel::TraceCalls::nesting_level + 1 if is_tracing;
 
-    if ( @{$XFD::cur_self->{XStack}} ) {
-        my $top = $XFD::cur_self->xpeek;
+    unless ( @{$XFD::cur_self->{XStack}} ) {
+        $XFD::cur_self->xpush( $new_item );
+    }
+    else {
+        my $e = $XFD::cur_self->{XStack}->[-1];
+        my $top = $e->{"#elt"};
+
         my $t = ref $top;
         my $meth;
         if ( $t eq "" ) {
-            $XFD::cur_self->{XStack}->[-1] = $new_item; 
+            $XFD::cur_self->{XStack}->[-1]->{"#elt"} = $new_item; 
+            $e->{scalar}++;
         }
         elsif ( $t eq "SCALAR" ) {
             $$top = $new_item; 
+            $e->{scalar}++;
         }
         elsif ( $t eq "HASH" ) {
             $top->{$name} = $new_item;
+            $e->{$name}++;
         }
         ## See if it's a blessed object that can add thingamies"
-        elsif ( $meth = UNIVERSAL::can( $top, $name ) ) {
+        elsif ( 
+            ( $meth = UNIVERSAL::can( $top, $name ) )
+            || ( $meth = UNIVERSAL::can( $top, "set_$name" ) )
+        ) {
             $top->$meth( $new_item );
+            $e->{$name}++;
         }
         else {
-            croak "don't know how to xoverwrite a '$t' (which is what is on the top of the xstack)";
+            croak "don't know how to xoverwrite $name for a '$t' (which is what is on the top of the xstack)";
         }
+        $XFD::cur_self->xpush( $new_item )
+            if ref $new_item && ref $new_item ne "SCALAR";
     }
 
-    $XFD::cur_self->xpush( $new_item );
     return $new_item;
 }
 
@@ -1528,7 +1809,7 @@ sub xpeek {
         croak "xpeek() called on empty stack"
             unless @{$XFD::cur_self->{XStack}};
 
-        return $XFD::cur_self->{XStack}->[-1];
+        return $XFD::cur_self->{XStack}->[-1]->{"#elt"};
     }
 
     local $XFD::cur_self = shift if UNIVERSAL::isa( $_[0], __PACKAGE__ );
@@ -1540,7 +1821,7 @@ sub xpeek {
         if     $index >      $#{$XFD::cur_self->{XStack}}
             || $index < -1 - $#{$XFD::cur_self->{XStack}};
 
-    return $XFD::cur_self->{XStack}->[$index];
+    return $XFD::cur_self->{XStack}->[$index]->{"#elt"};
 }
 
 =item xpop
@@ -1567,17 +1848,11 @@ sub xpop {
     croak "xpop() called on empty stack"
         unless @{$XFD::cur_self->{XStack}};
 
-    emit_trace_SAX_message "EventPath: xpop()ing ", $XFD::cur_self->{XStack}->[-1] if is_tracing;
-    return pop @{$XFD::cur_self->{XStack}};
+    emit_trace_SAX_message "EventPath: xpop()ing ", $XFD::cur_self->{XStack}->[-1]->{"#elt"} if is_tracing;
+    return (pop @{$XFD::cur_self->{XStack}})->{"#elt"};
 }
 
 =item xstack_empty
-
-    my $d = XML::Filter::Dispatcher->new(
-        Rules => [
-            ....rules to build an object hierarchy...
-        ],
-    );
 
 Handy for detecting a nonempty stack:
 
@@ -1593,9 +1868,61 @@ sub xstack_empty {
     return ! @{$XFD::cur_self->{XStack}};
 }
 
+=item xstack_max
+
+Handy for walking the stack:
+
+    for my $i ( reverse 0 .. xstack_max ) {  ## from top to bottom
+        use BFD;d xpeek( $i );
+    }
+
+Because C<xpeek> and C<xpop> throw exceptions on an empty stack,
+C<xstack_max> may be used to walk the stack safely.
+
+=cut
+
+sub xstack_max { 
+    local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
+    return $#{$XFD::cur_self->{XStack}};
+}
+
 =back
 
 =cut
+
+##
+## A little help for debugging
+##
+{
+    ## This allows us to number events as the arrive and then
+    ## look those numbers up using their memory addresses
+    ## This is a 1..N numbering system: the left hand side of the
+    ## ||= preallocates the key, so there's already 1 key in the
+    ## hash when this is first called.
+    ## We also hold on to the events to keep them from reusing numbers.
+    my %events;
+    sub _ev($) {
+        return (
+            $events{int $_[0]} ||=
+                { ctx => $_, ev => 0+keys %events }
+        )->{ev};
+    }
+}
+
+{
+    ## This allows us to number events as the arrive and then
+    ## look those numbers up using their memory addresses
+    ## This is a 1..N numbering system: the left hand side of the
+    ## ||= preallocates the key, so there's already 1 key in the
+    ## hash when this is first called.
+    my %postponements;
+    sub _po($) {
+        return (
+            $postponements{int $_[0]} ||=
+                { ctx => $_, po => 0+keys %postponements}
+        )->{po};
+    }
+}
 
 ##
 ## SAX handlers
@@ -1645,8 +1972,7 @@ sub _call_queued_end_subs {
         my $end_subs = $start_ctx->{EndSubs};
         while ( @$end_subs ) {
             local $_ = pop @$end_subs;
-            emit_trace_SAX_message "EventPath: *** calling EndSub ", $i++, " for event ", int $start_ctx, " ***" if is_tracing;
-            local $Devel::TraceCalls::nesting_level = $Devel::TraceCalls::nesting_level + 1 if is_tracing;
+            emit_trace_SAX_message "EventPath: *** calling EndSub ", $i++, " for event ", _ev $start_ctx, " ***" if is_tracing;
 
             $_->[0]->( @{$_}[1..$#$_], @_ )
         }
@@ -1664,8 +1990,7 @@ sub _execute_next_action {
     my $key = ( sort { $a <=> $b } keys %$actions)[-1];
     return unless defined $key;
 
-    emit_trace_SAX_message "EventPath: *** executing action $key for event ", int $XFD::ctx, " ***" if is_tracing;
-    local $Devel::TraceCalls::nesting_level = $Devel::TraceCalls::nesting_level + 1 if is_tracing;
+    emit_trace_SAX_message "EventPath: *** executing action $key for event ", _ev $XFD::ctx, " ***" if is_tracing;
     my $sub = shift @{$actions->{$key}};
     delete $actions->{$key} unless @{$actions->{$key}};
 
@@ -1676,9 +2001,8 @@ sub _execute_next_action {
 #    my $i = 0;
 #    while ( @{$XFD::ctx->{EndSubs}} ) {
 #        local $_ = shift @{$XFD::ctx->{EndSubs}};
-#        emit_trace_SAX_message "EventPath: *** calling delayed (due to postponed start_) EndSub ", $i++, " for event ", int $XFD::ctx, " ***" if is_tracing;
+#        emit_trace_SAX_message "EventPath: *** calling delayed (due to postponed start_) EndSub ", $i++, " for event ", _ev $XFD::ctx, " ***" if is_tracing;
 #        local $XFD::ctx = $XFD::ctx->{EndContext};
-#        local $Devel::TraceCalls::nesting_level = $Devel::TraceCalls::nesting_level + 1 if is_tracing;
 #
 #        $_->[0]->( @{$_}[1..$#$_], @_ )
 #    }
@@ -1696,11 +2020,11 @@ sub _queue_pending_event {
 #    if ( exists $ctx->{PendingActions}
 #        || ( $ctx->{Postponements} && @{$ctx->{Postponements}} )
 #    ) {
-#        emit_trace_SAX_message "EventPath: queuing pending event ", int $ctx if is_tracing;
+#        emit_trace_SAX_message "EventPath: queuing pending event ", _ev $ctx if is_tracing;
        push @{$self->{PendingEvents}}, $ctx;
 #    }
 #    else {
-#        emit_trace_SAX_message "EventPath: not queuing event ", int $ctx if is_tracing;
+#        emit_trace_SAX_message "EventPath: not queuing event ", _ev $ctx if is_tracing;
 #    }
 
     while ( @{$self->{PendingEvents}}
@@ -1725,7 +2049,7 @@ sub _queue_pending_event {
             $self->_execute_next_action;
         }
         else {
-            emit_trace_SAX_message "EventPath: discarding event ", int $c if is_tracing;
+            emit_trace_SAX_message "EventPath: discarding event ", _ev $c if is_tracing;
         }
 
         if (
@@ -1748,7 +2072,7 @@ sub _queue_pending_event {
         join( ", ",
             map
                 $_->{PostponementCount}
-                    ? int( $_ ).":$_->{PostponementCount}:".(
+                    ? _ev( $_ ).":$_->{PostponementCount}:".(
                         exists $_->{PendingActions}
                             ? "action"  ## TODO: dump actions?
                             : "<No action>"
@@ -1782,7 +2106,7 @@ sub _build_ctx {
             $_->[1] = $ctx;
         }
     }
-    emit_trace_SAX_message "EventPath: built event ", int $ctx if is_tracing;
+    emit_trace_SAX_message "EventPath: built event ", _ev $ctx, " (from event ", _ev $parent_ctx, ")" if is_tracing;
     return $ctx;
 }
 
@@ -1799,7 +2123,7 @@ sub _build_end_ctx_from_start_ctx {
     my $end_ctx = {
         PendingActions => $start_ctx->{PendingEndActions},
     };
-    emit_trace_SAX_message "EventPath: built end_ event ", int $end_ctx if is_tracing;
+    emit_trace_SAX_message "EventPath: built end_ event ", _ev $end_ctx, " (from event ", _ev $start_ctx, ")" if is_tracing;
     return $end_ctx;
 }
 
@@ -1813,6 +2137,7 @@ sub start_document {
     $self->{PendingEvents} = [];
 
     local $XFD::ctx = $self->{DocCtx};
+    emit_trace_SAX_message "EventPath: using doc event ", _ev $XFD::ctx if is_tracing;
     $self->{CtxStack} = [ $XFD::ctx ];
     $self->_call_queued_subs( "start_document", @_ );
 
@@ -1858,12 +2183,32 @@ sub start_element {
 
     push @{$self->{CtxStack}}, local $XFD::ctx = $self->_build_ctx;
 
-    $self->_call_queued_subs( "start_element", @_ );
-#        if $XFD::ctx->{start_element};
+    {
+        local $XFD::cur_self = $self;
 
-    if ( exists $XFD::ctx->{ChildCtx}->{attribute}  ## Any attr handlers?
+        $XFD::ctx->{EventType} = "start_element";
+        $XFD::ctx->{Node}      = $_[0];
+        $XFD::ctx->{HighScore} = -1;
+
+        for ( @{$XFD::ctx->{start_element}} ) {
+            $_->[0]->( @{$_}[1..$#$_], @_ );
+        }
+
+        $self->{OncePerElementSub}->( $self, [] )
+            if $self->{OncePerElementSub};
+
+        $self->_queue_pending_event( $XFD::ctx );
+    }
+
+    if (
+        (
+            $self->{OncePerAttributeSub}
+            || exists $XFD::ctx->{ChildCtx}->{attribute}  ## Any attr handlers?
+        )
         && exists $elt->{Attributes}           ## Any attrs?
     ) {
+        $XFD::ctx->{ChildCtx} ||= {};
+
         ## Put attrs in a reproducible order.  perl5.6.1 and perl5.8.0
         ## use different hashing algs, this helps keep code stable
         ## across versions.
@@ -1877,10 +2222,19 @@ sub start_element {
             } values %{$elt->{Attributes}}
         ) {
             local $XFD::ctx = $self->_build_ctx;
-            $self->_call_queued_subs(
-                "attribute",  ## not a real SAX event
-                $attr,
-            );
+
+            $XFD::ctx->{EventType} = "attribute";
+            $XFD::ctx->{Node}      = $attr;
+            $XFD::ctx->{HighScore} = -1;
+
+            for ( @{$XFD::ctx->{attribute}} ) {
+                $_->[0]->( @{$_}[1..$#$_], @_ );
+            }
+
+            $self->{OncePerAttributeSub}->( $self, [] )
+                if $self->{OncePerAttributeSub};
+
+            $self->_queue_pending_event( $XFD::ctx );
         }
     }
 
@@ -2013,62 +2367,50 @@ catch all such nonsense.
 
 =over
 
-=item o
+=item *
 
 ancestor:: (XPath, todo, will be limited)
 
-=item o
+=item *
 
 ancestor-or-self:: (XPath, todo, will be limited)
 
-=item o
+=item *
 
 C<attribute::> (XPath, C<attribute>)
 
-=item o
+=item *
 
 C<child::> (XPath)
 
-=item o
+=item *
 
 C<descendant::> (XPath)
 
-=item o
+=item *
 
 C<descendant-or-self::> (XPath)
 
-=item o
+=item *
 
-C<end::> (SAX, C<end_element>, C<end_document>)
+C<end::> (SAX, C<end_element>)
 
-Like C<self::>, but selects the C<end_...> event of the document or
+Like C<child::>, but selects the C<end_element> event of the
 element context node.
 
-This is usually used in preference to C<end-document::> or
-C<end-element::> due to it's brevity.  It is also easier to optimize
-when used with other rules:
+This is usually used in preference to C<end-element::> due to its
+brevity.
 
-    'foo'        => ...
-    'foo/end::*' => ...
+Because this selects the end element event, most of the path tests that
+may follow other axes are not valid following this axis.  self:: and
+attribute:: are the only legal axes that may occur to the right of this
+axis.
 
-Because this selects the end document or end element event, most
-of the path tests that may follow other axes are not valid following
-this axis.  self:: are the only legal axes that may occur to the right
-of this axis.
-
-This differs from C<end-element::> in that it is like C<self::> and not
-C<child::>.  The C<foo/end::*> rule matches C<< </foo> >>, whereas
-C<foo/end-element::*> matches the end tags of C<< <foo> >>'s child
-elements.
-
-=item o
+=item *
 
 C<end-document::> (SAX, C<end_document>)
 
-B<EXPERIMENTAL>.  This axis is confusing compared to and
-C<end-element::>, and is not necessary given C<end::>.
-
-Like C<self::>, but selects the C<end_...> event of the document
+Like C<self::>, but selects the C<end_document> event of the document
 context node.
 
 Note: Because this selects the end document event, most of the path tests
@@ -2076,27 +2418,26 @@ that may follow other axes are not valid following this axis.
 self:: are the only legal axes that may occur to the
 right of this axis.
 
-=item o
+=item *
 
 C<end-element::> (SAX, C<end_element>)
 
-B<EXPERIMENTAL>.  This axis is confusing compared to C<end::> and
-C<end-document::>, and is not necessary given C<end::>.
+B<EXPERIMENTAL>.  This axis is not necessary given C<end::>.
 
-Like C<child::>, but selects the C<end_...> event of the element
-context node.  This is like C<start-element::>, but different from
-C<end::> and C<end-document::>.
+Like C<child::>, but selects the C<end_element> event of the element
+context node.  This is like C<end::>, but different from
+C<end-document::>.
 
 Note: Because this selects the end element event, most of the path tests
 that may follow other axes are not valid following this axis.
 attribute:: and self:: are the only legal axes that may occur to the
 right of this axis.
 
-=item o
+=item *
 
 C<following::> (XPath, B<not soon>)
 
-=item o
+=item *
 
 C<following-sibling::> (XPath, B<not soon>)
 
@@ -2105,22 +2446,22 @@ are likely to wait until I have time.  Until then, setting a flag in
 $self in one handler and checking in another should suffice for most
 uses.
 
-=item o
+=item *
 
 C<namespace::> (XPath, C<namespace>, B<todo>)
 
-=item o
+=item *
 
 C<parent::> (XPath, B<todo (will be limited)>)
 
 parent/ancestor paths will not allow you to descend the tree, that would
 require DOM building and SAX event queueing.
 
-=item o
+=item *
 
 C<preceding::> (XPath, B<not soon>)
 
-=item o
+=item *
 
 C<preceding-sibling::> (XPath, B<not soon>)
 
@@ -2129,25 +2470,24 @@ are likely to wait until I have time.  Until then, setting a flag in
 $self in one handler and checking in another should suffice for most
 uses.
 
-=item o
+=item *
 
 C<self::> (XPath)
 
-=item o
+=item *
 
-C<start::> (SAX, C<start_document>, C<start_element> )
+C<start::> (SAX, C<start_element> )
 
-This is like self::, but selects only the C<start_document> or
-C<start_element> events.  This is usually used in preference to
-C<start-document::> or C<start-element::> due to it's brevity.
+This is like child::, but selects the C<start_element> events.  This is
+usually used in preference to C<start-element::> due to its brevity.
 
-It's rarely used to drive code handlers because rules that match
-document or element events fire code handlers on the C<start_element>
-event and not the C<end_element> event (however, when a SAX handler
-is used, such expressions send both start and end events to the
-downstream handler).
+C<start::> is rarely used to drive code handlers because rules that
+match document or element events already only fire code handlers on the
+C<start_element> event and not the C<end_element> event (however, when a
+SAX handler is used, such expressions send both start and end events to
+the downstream handler, so start:: has utility there).
 
-=item o
+=item *
 
 C<start-document::> (SAX, C<start_document>)
 
@@ -2156,16 +2496,15 @@ C<start-element::>, and is not necessary given C<start::>.
 
 This is like C<self::>, but selects only the C<start_document> events.
 
-=item o
+=item *
 
-C<start-element::> (SAX)
+C<start-element::> (SAX, C<start_element>)
 
-B<EXPERIMENTAL>.  This axis is confusing compared to C<start::> and
-C<start-document::>, and is not necessary given C<start::>.
+B<EXPERIMENTAL>.  This axis is not necessary given C<start::>.
 
 This is like C<child::>, but selects only the C<start_element> events.
 
-back
+=back
 
 =item *
 
@@ -2182,25 +2521,25 @@ String Functions
 
 =over
 
-=item o
+=item *
 
 concat( string, string, string* )
 
-=item o
+=item *
 
 contains( string, string )
 
-=item o
+=item *
 
 normalize-space( string? )
 
 C<normalize-space()> is equivalent to C<normalize-space(.)>.
 
-=item o
+=item *
 
 starts-with( string, string )
 
-=item o
+=item *
 
 string(), string( object )
 
@@ -2212,7 +2551,7 @@ Object may be a number, boolean, string, or the result of a location path:
 
 C<string()> is equivalent to C<string(.)>.
 
-=item o
+=item *
 
 string-length( string? )
 
@@ -2221,19 +2560,19 @@ keeping all of the context node's children in mempory.  Could enable it
 for leaf nodes, I suppose, like attrs and #PCDATA containing elts.  Drop
 me a line if you need this (it's not totally trivial or I'd have done it).
 
-=item o
+=item *
 
 substring( string, number, number? )
 
-=item o
+=item *
 
 substring-after( string, string )
 
-=item o
+=item *
 
 substring-before( string, string )
 
-=item o
+=item *
 
 translate( string, string, string )
 
@@ -2245,25 +2584,25 @@ Boolean Functions, Operators
 
 =over
 
-=item o
+=item *
 
 boolean( object )
 
 See notes about node sets for the string() function above.
 
-=item o
+=item *
 
 false()
 
-=item o
+=item *
 
 lang( string ) B<TODO>.
 
-=item o
+=item *
 
 not( boolean )
 
-=item o
+=item *
 
 true()
 
@@ -2275,15 +2614,15 @@ Number Functions, Operators
 
 =over
 
-=item o
+=item *
 
 ceil( number )
 
-=item o
+=item *
 
 floor( number )
 
-=item o
+=item *
 
 number( object? )
 
@@ -2296,11 +2635,11 @@ and may change in the future.
 
 C<number()> is equivalent to C<number(.)>.
 
-=item o
+=item *
 
 round ( number )
 
-=item o sum( node-set ) B<TODO>.
+=item * sum( node-set ) B<TODO>.
 
 =back
 
@@ -2313,33 +2652,33 @@ environment.
 
 =over
 
-=item o
+=item *
 
 last() B<TODO>.
 
-=item o
+=item *
 
 position() B<TODO>.
 
-=item o
+=item *
 
 count( node-set ) B<TODO>.
 
 =back
 
-=item o
+=item *
 
 id( object ) B<TODO>.
 
-=item o
+=item *
 
 local-name( node-set? )
 
-=item o
+=item *
 
 namespace-uri( node-set? )
 
-=item o
+=item *
 
 name( node-set? )
 
@@ -2362,24 +2701,25 @@ Supports limited nodesets, see the string() function description for details.
 Missing Features
 
 Some features are entirely or just currently missing due to the lack of
-nodesets or the time needed to work around their lack.  This is an incomplete list; it's growing as I find new things not to implement.
+nodesets or the time needed to work around their lack.  This is an
+incomplete list; it's growing as I find new things not to implement.
 
 =over
 
-=item o
+=item *
 
 count()
 
 No nodesets => no count() of nodes in a node set.
 
-=item o
+=item *
 
 last()
 
 With SAX, you can't tell when you are at the end of what would be a node set
 in XPath.
 
-=item o
+=item *
 
 position()
 
@@ -2393,15 +2733,15 @@ Todo features
 
 =over
 
-=item o
+=item *
 
 id()
 
-=item o
+=item *
 
 lang()
 
-=item o
+=item *
 
 sum( node-set )
 
@@ -2413,7 +2753,7 @@ Extensions
 
 =over
 
-=item o
+=item *
 
 is-start-event(), is-end-event()
 
@@ -2484,7 +2824,7 @@ This is more of a frustration than a limitation, but this class requires that
 you pass in a type when setting variables (in the C<Vars> ctor parameter or
 when calling C<xset_var>).  This is so that the engine can tell what type a
 variable is, since string(), number() and boolean() all treat the Perlian C<0>
-differently depending on it's type.  In Perl the digit C<0> means C<false>,
+differently depending on its type.  In Perl the digit C<0> means C<false>,
 C<0> or C<'0'>, depending on context, but it's a consistent semantic.  When
 passing a C<0> from Perl lands to XPath-land, we need to give it a type so that
 C<string()> can, for instance, decide whether to convert it to C<'0'> or
