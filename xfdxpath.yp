@@ -558,8 +558,6 @@ sub parse {
     my $self = shift;
     my ( $xpath, $action_code, $options ) = @_;
 
-    $XFD::has_start_or_end = 0;
-
     my $p = XML::Filter::Dispatcher::Parser->new(
         yylex   => \&lex,
         yyerror => \&error,
@@ -567,6 +565,11 @@ sub parse {
             ? ( yydebug => 0x1D )
             : (),
     );
+
+    local $XFD::has_start_or_end =
+        defined $options->{RunAtStartAndEnd}
+            ? $options->{RunAtStartAndEnd}
+            : 0;
 
     local $XFD::fold_constants =
         defined $options->{FoldConstants}

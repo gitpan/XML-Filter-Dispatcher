@@ -11,10 +11,17 @@ use UNIVERSAL;
 
 my( $doc_root_out, $foo_out );
 
+## XML::SAX::Writer clears the output string every start_document() as
+## of this writing.  Not sure it always will, but it might.
+sub finalize{}
+sub output {
+   $foo_out .= $_[1];
+}
+
 my $d = XML::Filter::Dispatcher->new(
     Rules => [
         "/"   => XML::SAX::Writer->new( Output => \$doc_root_out ),
-        "foo" => XML::SAX::Writer->new( Output => \$foo_out ),
+        "foo" => XML::SAX::Writer->new( Output => bless \$a, "main" ),
     ],
 );
 

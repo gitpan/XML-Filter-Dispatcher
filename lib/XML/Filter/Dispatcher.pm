@@ -348,7 +348,7 @@ C<start_...> and C<end_...> events.  By default
 
 =cut
 
-$VERSION = 0.3;
+$VERSION = 0.31;
 @ISA = qw( XML::SAX::Base Exporter );
 
 @EXPORT_OK = qw( xresult xset_var xget_var );
@@ -407,21 +407,26 @@ sub new {
         push @{$self->{Actions}}, $action;
         my $action_num = $#{$self->{Actions}};
         my $action_code;
+
+        my %options = (
+            %$self,
+            RuleNumber => $rule_number++,
+        );
         
         if ( $action_type && $action_type ne "CODE" ) {
             ## Must be a SAX handler, make up some action code to
             ## install it and arrange for it's removal.
+#            $options{RunAtStartAndEnd} = 1;
             $action_code = <<CODE_END;
 {
     my ( \$d, \$ctx ) = \@_;
     warn "replacing \\\$ctx->{TempHandler}\n" if \$ctx->{TempHandler};
     \$ctx->{TempHandler} = \$d->{Handler};
     \$d->set_handler( \$d->{Actions}[$action_num] );
-    if ( ! \$d->{StartedWriters}->{\$d->{Handler}} ) {
+    if ( \$ctx->{IsStartEvent} && \$ctx->{EventType} ne "start_document" ) {
         \$d->XML::SAX::Base::start_document(
             \@{\$d->{CtxStack}->[0]->{SAXArgs}}
         );
-        \$d->{StartedWriters}->{\$d->{Handler}} = \$d->{Handler};
     }
 }
 CODE_END
@@ -437,10 +442,7 @@ A
         my $code = XML::Filter::Dispatcher::Parser->parse(
             $expr,
             $action_code,
-            {
-                %$self,
-                RuleNumber => $rule_number++,
-            },
+            \%options,
         );
 
         die "Couldn't compile XPath expression '$expr'\n"
@@ -683,7 +685,6 @@ sub _check_tests {
 sub start_document {
     my $self = shift ;
 
-    delete $self->{StartedWriters};
     $self->{CtxStack} = [ $self->{DocCtx} ] ;   ## Context Stack
 
     ## precalc this because most actions need it.
@@ -723,22 +724,12 @@ sub end_document {
 
     my $r = $self->SUPER::end_document( @_ );
 
-    delete $self->{StartedWriters}->{$self->{Handler}}
-        if $self->{Handler}
-            && exists  $self->{StartedWriters}->{$self->{Handler}};
-
     if ( exists $ctx->{TempHandler} ) {
         $self->set_handler( $ctx->{TempHandler} );
         delete $ctx->{TempHandler};
+        $self->SUPER::end_document({});
     }
     
-    for ( values %{$self->{StartedWriters}} ) {
-        $self->set_handler( $_ );
-        $self->SUPER::end_document( @_ )
-    }
-
-    delete $self->{StartedWriters};
-
     return $r;
 }
 
@@ -811,6 +802,7 @@ sub end_element {
     my $r = $self->SUPER::end_element( @_ );
 
     if ( exists $ctx->{TempHandler} ) {
+        $self->SUPER::end_document({});
         $self->set_handler( $ctx->{TempHandler} );
         delete $ctx->{TempHandler};
     }
