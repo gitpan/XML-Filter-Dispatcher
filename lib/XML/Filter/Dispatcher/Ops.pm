@@ -546,7 +546,7 @@ sub XFD::PathTest::curry_tests {
     ## This is a property of the grammar.
     my $self = shift;
     my $next = $self->[_next];
-    die "$self does not have a next" unless defined $next;
+    Carp::confess "$self does not have a next" unless defined $next;
     return $next->curry_tests;
 }
 
@@ -690,10 +690,13 @@ sub XFD::Action::gate_action {
     $action_code = <<CODE_END;
 
 if ( $score > \$ctx->{HighScore} ) {
-  emit_trace_SAX_message "selecting action $id (score $score) for event ", int \$ctx if is_tracing;
+  emit_trace_SAX_message "selecting action $id (score $score > \$ctx->{HighScore}) for event ", int \$ctx if is_tracing;
   \$ctx->{HighScore} = $score;
   \$ctx->{Action} = sub {
 $action_code  };
+}
+else {
+  emit_trace_SAX_message "not selecting action $id (score $score, not > \$ctx->{HighScore}) for event ", int \$ctx if is_tracing;
 }
 CODE_END
 
@@ -1011,7 +1014,7 @@ push \@{\$ctx->{EndSubs}}, [
     emit_trace_SAX_message "EventPath: checking postponement ", int \$postponement, " for leftmost predicate in event ", int \$ctx if is_tracing;
     for my \$ctx ( \@{\$postponement->[_p_contexts]} ) {
       \@{\$ctx->{Postponements}} = grep \$_ != \$postponement, \@{\$ctx->{Postponements}};
-      emit_trace_SAX_message \@{\$ctx->{Postponements}} . " postponements left in event ", int \$ctx, ": (", join( ", ", map int \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
+      emit_trace_SAX_message "EventPath: ", \@{\$ctx->{Postponements}} . " postponements left in event ", int \$ctx, ": (", join( ", ", map int \$_, \@{\$ctx->{Postponements}} ), ")" if is_tracing;
     }
 $action_code  },
   \$ctx,
@@ -1073,9 +1076,6 @@ CODE_END
         $postponement_init_code = <<CODE_END;
 \$postponement = [ undef ];
 emit_trace_SAX_message "EventPath: creating postponement ", int \$postponement, " for expression in event ", int \$ctx if is_tracing;
-CODE_END
-
-        $action_code = <<CODE_END;
 push \@{\$ctx->{Postponements}}, \$postponement;
 push \@{\$ctx->{EndSubs}}, [
   sub {
@@ -1090,6 +1090,7 @@ $action_code  },
   \$postponement
 ];
 CODE_END
+        $action_code = "";
     }
 
 #    my $code = $self->insert_next_in_to_template( <<CODE_END );
@@ -2990,6 +2991,13 @@ sub XFD::EventType::processing_instruction::useful_event_contexts { qw( start_do
 sub XFD::EventType::processing_instruction::curry_tests { "processing_instruction" }
 ##########
    @XFD::EventType::principal_event_type::ISA = qw( XFD::EventType );
+sub XFD::EventType::principal_event_type::curry_tests {
+    my $self = shift;
+    ## 'twould be good if we could see PrincipalEventType here.
+    ## TODO: pass $context down through curry_tests.
+    return @all_curry_tests;
+}
+
 sub XFD::EventType::principal_event_type::incr_code_template {
     my $self = shift;
     my ( $context ) = @_;

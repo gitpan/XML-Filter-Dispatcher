@@ -1,5 +1,7 @@
 package XML::Filter::Dispatcher ;
 
+$VERSION = 0.41;
+
 =head1 NAME
 
 XML::Filter::Dispatcher - Path based event dispatching with DOM support
@@ -284,6 +286,8 @@ which prints:
 =item * Examples for accumulating data
 
 =item * Advanced pattern matching examples
+
+=back
 
 =cut
 
@@ -613,7 +617,6 @@ or en mass:
 
 =cut
 
-$VERSION = 0.4;
 @ISA = qw( Exporter );
 
 BEGIN {
@@ -750,7 +753,7 @@ sub new {
         }
     }
 
-    return $self unless @{$self->{OpTree}};
+    return $self unless @{$self->{OpTree} || []};
 
     $self->{OpTree}->fixup( {} );
     my $code = $self->{OpTree}->as_incr_code( {
@@ -868,7 +871,6 @@ sub _look_up_var {
     my $self = shift;
     my ( $vname ) = @_;
 
-#use Data::Dumper; warn Data::Dumper::Dumper( $ctx );
     my $ctx = $self->{CtxStack}->[-1];
     return $ctx->{Vars}->{$vname} if exists $ctx->{Vars}->{$vname};
 
@@ -1045,6 +1047,8 @@ sub get_handler {
         if exists $self->{Handlers}->{$name}
 }
 
+=back
+
 
 =head2 The xstack
 
@@ -1093,11 +1097,11 @@ contain the child nodes.
 
 =item xpush
     
-Push values on to the xstack.  All will be removed from the xstack
-at the end of the current element.  The topmost item on the xstack is
-available through the peek method.  Elements xpushed before the first
-element (usually in the C<start_document()> event) remain on the stack
-after the document has been parsed and a call like
+Push values on to the xstack.  These will be removed from the xstack at
+the end of the current element.  The topmost item on the
+xstack is available through the peek method.  Elements xpushed before
+the first element (usually in the C<start_document()> event) remain on
+the stack after the document has been parsed and a call like
 
    my $elt = $dispatcher->xpop;
 
@@ -1254,7 +1258,10 @@ sub _call_queued_end_subs {
     $XFD::ctx->{Node}      = $_[0];
     $XFD::ctx->{HighScore} = -1;
 
+    my $i = 0;
     for ( @{$start_ctx->{EndSubs}} ) {
+emit_trace_SAX_message "EventPath: calling EndSub ", $i++, " for event ", int $start_ctx if is_tracing;
+
         $_->[0]->( @{$_}[1..$#$_], @_ )
     }
 
@@ -1268,15 +1275,15 @@ sub _queue_pending_event {
 
     my ( $ctx ) = @_;
 
-    if ( exists $ctx->{Action}
-        || ( $ctx->{Postponements} && @{$ctx->{Postponements}} )
-    ) {
-        emit_trace_SAX_message "EventPath: queuing pending event ", int $ctx if is_tracing;
-        push @{$self->{PendingEvents}}, $ctx;
-    }
-    else {
-        emit_trace_SAX_message "EventPath: not queuing event ", int $ctx if is_tracing;
-    }
+#    if ( exists $ctx->{Action}
+#        || ( $ctx->{Postponements} && @{$ctx->{Postponements}} )
+#    ) {
+#        emit_trace_SAX_message "EventPath: queuing pending event ", int $ctx if is_tracing;
+       push @{$self->{PendingEvents}}, $ctx;
+#    }
+#    else {
+#        emit_trace_SAX_message "EventPath: not queuing event ", int $ctx if is_tracing;
+#    }
 
     while ( @{$self->{PendingEvents}}
         && ! ( exists $self->{PendingEvents}->[0]->{Postponements}
@@ -1284,6 +1291,10 @@ sub _queue_pending_event {
         )
     ) {
         my $c = shift @{$self->{PendingEvents}};
+        if ( substr( $c->{EventType}, 0, 6 ) eq "start_" ) {
+            push @{$self->{XStackMarks}}, scalar @{$self->{XStack}};
+        }
+
         if ( exists $c->{Action} ) {
             ## The "-1" here implements the "last match wins" logic.
             ## All rules are evaluated in order; the last rule to evaluate
@@ -1299,6 +1310,10 @@ emit_trace_SAX_message "EventPath: result set to ", defined $self->{LastHandlerR
         else {
             emit_trace_SAX_message "EventPath: discarding event ", int $c if is_tracing;
         }
+
+        if ( $c->{EventType} eq "end_element" ) {
+            splice @{$self->{XStack}}, pop(  @{$self->{XStackMarks}} );
+        }
     }
 
     emit_trace_SAX_message
@@ -1306,11 +1321,13 @@ emit_trace_SAX_message "EventPath: result set to ", defined $self->{LastHandlerR
         @{$self->{PendingEvents}} . " events pending (",
         join( ", ",
             map
-                int( $_ ).":".@{$_->{Postponements}}.":".(
-                    exists $_->{Action}
-                        ? $_->{Action}
-                        : "<No action>"
-                ),
+                exists $_->{Postponements}
+                    ? int( $_ ).":".@{$_->{Postponements} || []}.":".(
+                        exists $_->{Action}
+                            ? $_->{Action}
+                            : "<No action>"
+                    )
+                    : (),
                 @{$self->{PendingEvents}}
         ),
         ")"  if is_tracing;
@@ -1324,6 +1341,21 @@ sub _build_ctx {
     my $ctx = { %{$parent_ctx->{ChildCtx}} };
     $ctx->{Vars} = { %{$parent_ctx->{Vars}} }
         if exists $parent_ctx->{Vars};
+
+    if ( exists $ctx->{EndSubs} ) {
+        ## When descendant-or-self:: queues up cloned postponements
+        ## for the child contexts, the child contexts don't exist yet
+        ## so it puts undef where they should be.  This loop replaces
+        ## those undefs with the freshly minted context.  Only
+        ## descendant-or-self:: does this, so we can assume those are
+        ## the only kind of EndSubs we'll find.
+        $ctx->{EndSubs} = [ map [ @$_ ], @{$ctx->{EndSubs}} ];
+        for ( @{$ctx->{EndSubs}} ) {
+            die "The first param to the child's EndSubs should be undef not $_->[1]"
+                if defined $_->[1];
+            $_->[1] = $ctx;
+        }
+    }
     return $ctx;
 }
 
@@ -1332,6 +1364,7 @@ sub start_document {
     my $self = shift ;
 
     $self->{XStack} = [];
+    $self->{XStackMarks} = [];
     delete $self->{DocStartedFlags};
     $self->{PendingEvents} = [];
 
@@ -1384,7 +1417,18 @@ sub start_element {
     if ( exists $XFD::ctx->{ChildCtx}->{attribute}  ## Any attr handlers?
         && exists $elt->{Attributes}           ## Any attrs?
     ) {
-        for my $attr ( values %{$elt->{Attributes}} ) {
+        ## Put attrs in a reproducible order.  perl5.6.1 and perl5.8.0
+        ## use different hashing algs, this helps keep code stable
+        ## across versions.
+        for my $attr (
+            sort {
+                ( $a->{NamespaceURI} || "" ) cmp ( $b->{NamespaceURI} || "" )
+                                              ||
+                ( $a->{LocalName}    || "" ) cmp ( $b->{LocalName}    || "" )
+                                              ||
+                ( $a->{Name}         || "" ) cmp ( $b->{Name}         || "" )
+            } values %{$elt->{Attributes}}
+        ) {
             local $XFD::ctx = $self->_build_ctx;
             $self->_call_queued_subs(
                 "attribute",  ## not a real SAX event
@@ -1407,8 +1451,6 @@ sub end_element {
         local $XFD::ctx = {};
         $self->_call_queued_end_subs( end_element => $start_ctx, @_ );
     }
-
-    splice @{$self->{XStack}}, $start_ctx->{XStackLevel} + 1;
 
     return;
 }

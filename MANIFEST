@@ -9,11 +9,12 @@ lib/XML/Filter/Dispatcher/AsStructHandler.pm
 lib/XML/Filter/Dispatcher/Ops.pm
 lib/XML/Filter/Dispatcher/Parser.pm
 lib/XML/Filter/Dispatcher/Runtime.pm
-t/examples.t
+t/builder.t
 t/filter.t
 t/hash.t
 t/helpfulerrors.t
 t/order.t
+t/stooges.t
 t/struct.t
 t/useless.t
 t/vars.t

@@ -354,13 +354,16 @@ sub { d $abcd, '.',                                                [ '']        
 sub { d $abcd, '//b',                                              [ 'b' ]                           },
 sub { d $abcd, 'b',                                                [ 'b' ]                           },
 sub { d $abcd, '//./b',                                            [ 'b' ]                           },
+sub { d $abcd, 'd',                                                [ 'd', 'd' ]                      },
 ## This next one tests to make sure 'b' doesn't fire twice
 sub { d $abcd, '//.//b',                                           [ 'b' ]                           },
 sub { d $abcd, '/a/b/c',                                           [ 'c' ]                           },
 sub { d $abcd, '/a/b/c/d',                                         [ 'd', 'd' ]                      },
 sub { d $abcd, '(((/a)/b)/c)/d',                                   [ 'd', 'd' ]                      },
+##sub { d $abcd, '/*',                                               [ 'a' ]                           },
 sub { d $abcd, '/child::*',                                        [ 'a' ]                           },
 sub { d $abcd, '/*/child::*',                                      [ 'b' ]                           },
+sub { d $abcd, '*',                                                [ 'a', 'b', 'c', 'd', 'd' ]       },
 
 ##
 ## //descendant-or-self::node()
@@ -537,6 +540,15 @@ sub {
         },
     }
 },
+
+##
+## Some more complex expressions
+##
+sub { d $ab, 'string( //b )',     ['_b']  },
+sub { d $ab, 'string( //* )',     ['_bA'] },
+sub { d $ab, '//*[*]',            ['a'] },
+sub { d $ab, '//*[not(*)]',       ['b'] },
+#sub { d $ab, [ "//*[not(*)]" => [ "string()" ] ],   [ 'b_b' ]       },  ## TODO
 );
 
 plan tests => 2 * @tests;

@@ -1,5 +1,14 @@
 CHANGES file for XML::Filter::Dispatcher
 
+0.41 Fri Dec 20 09:54:02 EST 2002
+    - Fix attribute ordering sensitivity on perl's hash algorithm.  This
+      gets the test suite to pass and might help somebody somewhere's
+      production code to operate in a predictable fashion across perl
+      versions.
+    - string( * ) now compiles (and works :)
+    - get XStack synced with the order events.
+    - add t/builder.t
+
 0.4 Thu Dec 12 06:32:24 EST 2002
     - Major rewrite.  Now supports most of XPath plus EventPath goodies.
 
