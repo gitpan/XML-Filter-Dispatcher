@@ -1,6 +1,6 @@
 package XML::Filter::Dispatcher ;
 
-$VERSION = 0.50;
+$VERSION = 0.51;
 
 =head1 NAME
 
@@ -579,7 +579,7 @@ C<start_...> and C<end_...> events.  By default
 There are several APIs provided: general, xstack, and EventPath
 variable handling.
 
-The general API provides C<new()> and C<xvalue()>, C<xvaluetype()>, and
+The general API provides C<new()> and C<xvalue()>, C<xvalue_type()>, and
 C<xrun_next_action()>.
 
 The variables API provides C<xset_var()> and C<xget_var()>.
@@ -628,7 +628,7 @@ require Exporter;
 *import = \&Exporter::import;
 
 BEGIN {
-    my @general_API   = qw( xvalue xvaluetype xrun_next_action );
+    my @general_API   = qw( xvalue xvaluetype xvalue_type xevent_type xrun_next_action );
     my @xstack_API = qw( xpeek xpop xadd xset xoverwrite xpush xstack_empty xstack_max );
     my @variables_API = qw( xset_var xget_var );
     @EXPORT_OK = ( @general_API, @variables_API, @xstack_API );
@@ -656,6 +656,9 @@ use constant is_tracing => defined $Devel::TraceSAX::VERSION;
 # Devel::TraceSAX does not work under perl5.8.0
 #use constant is_tracing => 1;
 #sub emit_trace_SAX_message { warn @_ };
+
+use constant show_buffer_highwater =>
+    $ENV{XFDSHOWBUFFERHIGHWATER} || 0;
 
 BEGIN {
     eval( is_tracing
@@ -698,6 +701,15 @@ Must be called as a method, unlike other API calls provided.
 
 =cut
 
+my @every_names = qw(
+    attribute
+    characters
+    comment
+    start_element
+    processing_instruction
+);
+
+
 sub new {
     my $proto = shift ;
     my %handlers;
@@ -728,6 +740,12 @@ sub new {
     }
 
     $self->{Debug} ||= $ENV{XFDDEBUG} || 0;
+
+    $self->{SortAttributes} = 1
+        unless defined $self->{SortAttributes};
+    $self->{SetXValue} = 1
+        unless defined $self->{SetXValue};
+
 
     $self->{Rules} ||= [];
     $self->{Rules} = [ %{$self->{Rules}} ]
@@ -776,10 +794,10 @@ sub new {
 
         if ( $self->{Debug} > 1 ) {
             my $g = $self->{OpTree}->as_graphviz;
-            $self->{EveryElementOpTree}->as_graphviz( $g )
-                if $self->{EveryElementOpTree};
-            $self->{EveryAttributeOpTree}->as_graphviz( $g )
-                if $self->{EveryAttributeOpTree};
+            for ( map "${_}OpTree", @every_names ) {
+                $self->{$_}->as_graphviz( $g )
+                    if $self->{$_};
+            }
 
             open F, ">foo.png";
             print F $g->as_png;
@@ -791,37 +809,21 @@ sub new {
             FoldConstants => $self->{FoldConstants},
         } );
 
-        if ( $self->{EveryElementOpTree} ) {
-
-            my $c = $self->{EveryElementOpTree}->as_incr_code( {
+        for ( @every_names ) {
+            my $tree_name = "${_}OpTree";
+            my $sub_name  = "${_}Sub";
+            next unless exists $self->{$tree_name} && $self->{$tree_name};
+            my $sub_code = $self->{$tree_name}->as_incr_code( {
                 FoldConstants => $self->{FoldConstants},
             } );
 
-            if ( XFD::_indentomatic() || $self->{Debug} ) {
-                XFD::_indent $c;
-            }
+            XFD::_indent $sub_code
+                if XFD::_indentomatic() || $self->{Debug};
 
-            $code .= <<CODE_END if $self->{EveryElementOpTree};
-\$self->{OncePerElementSub} = sub {
+            $code .= <<CODE_END;
+\$self->{$sub_name} = sub {
   my ( \$d, \$postponement ) = \@_;
-$c}; ## end OncePerElementSub
-CODE_END
-        }
-
-        if ( $self->{EveryAttributeOpTree} ) {
-
-            my $c = $self->{EveryAttributeOpTree}->as_incr_code( {
-                FoldConstants => $self->{FoldConstants},
-            } );
-
-            if ( XFD::_indentomatic() || $self->{Debug} ) {
-                XFD::_indent $c;
-            }
-
-            $code .= <<CODE_END if $self->{EveryAttributeOpTree};
-\$self->{OncePerAttributeSub} = sub {
-  my ( \$d, \$postponement ) = \@_;
-$c}; ## end OncePerAttributeSub
+$sub_code}; ## end $sub_name
 CODE_END
         }
 
@@ -871,7 +873,14 @@ sub _optimize {
 
     @{$self->{OpTree}} = map $self->_optimize_rule( $_ ), @{$self->{OpTree}};
 
-    for ( $self->{OpTree}, $self->{EveryElementOpTree} ) {
+    ## The XFD::Rule ops are only used at compile-time to label exceptions
+    ## with the text of the rules.  The folding of common leading ops
+    ## foils that by combining several rules' ops in to one tree with (at
+    ## least) a common root.  Also, XFD::Rule ops look like unfoldable
+    ## ops to this stage of the opimizer.  Get rid of them.
+    @{$self->{OpTree}} = map $_->get_next, @{$self->{OpTree}};
+
+    for ( map $self->{"${_}OpTree"}, "", @every_names ) {
         $_ = $self->_combine_common_leading_ops( $_ )
             if $_;
     }
@@ -896,14 +905,11 @@ sub _optimize_rule {
         : ( $self->_optimize_rule_kid( $n ) );
 
     ## Capture any optimized code trees in to unions to make codegen easier.
-    $self->{EveryElementOpTree} = XFD::Optim::EveryStartElement->new(
-        @{$self->{EveryElementOpTree}}
-    ) if $self->{EveryElementOpTree};
-
-    ## Capture any optimized code trees in to unions to make codegen easier.
-    $self->{EveryAttributeOpTree} = XFD::Optim::EveryAttribute->new(
-        @{$self->{EveryAttributeOpTree}}
-    ) if $self->{EveryAttributeOpTree};
+    for ( @every_names ) {
+        my $tree_name = "${_}OpTree";
+        next unless exists $self->{$tree_name} && $self->{$tree_name};
+        $self->{$tree_name} = "XFD::Optim::$_"->new( @{$self->{$tree_name}} );
+    }
 
     return () unless @kids;
     $rule->force_set_next(
@@ -1011,21 +1017,40 @@ sub _optimize_doc_node_desc_or_self_node_kid {
 
     if ( $op->isa( "XFD::Axis::child" ) ) {
         my $kid = $op->get_next;
-        if ( $kid->isa( "XFD::node_name" ) ) {
-            ## The path is like "A" or "//A": optimize this to a special
-            ## composite opcode that is run directly by start_element().
+        if ( $kid->isa( "XFD::node_name" )
+            || $kid->isa( "XFD::namespace_test" )
+            || $kid->isa( "XFD::node_local_name" )
+        ) {
+            ## The path is like "A" or "//A": optimize this to
+            ## be run directly by start_element().
 
-            push @{$self->{EveryElementOpTree}}, $kid;
+            push @{$self->{start_elementOpTree}}, $kid;
+            return ();
+        }
+
+        if ( $kid->isa( "XFD::EventType::node" ) ) {
+            ## The path is like "node()" or "//node()": optimize this
+            ## to be run directly by
+            ## start_element(), comment(), processing_instruction()
+            ## and characters().
+            my $gkid = $kid->get_next;
+            push @{$self->{charactersOpTree}}, $gkid;
+            push @{$self->{commentOpTree}}, $gkid;
+            push @{$self->{processing_instructionOpTree}}, $gkid;
+            push @{$self->{start_elementOpTree}}, $gkid;
             return ();
         }
     }
     elsif ( $op->isa( "XFD::Axis::attribute" ) ) {
         my $kid = $op->get_next;
-        if ( $kid->isa( "XFD::node_name" ) ) {
+        if ( $kid->isa( "XFD::node_name" )
+            || $kid->isa( "XFD::namespace_test" )
+            || $kid->isa( "XFD::node_local_name" )
+        ) {
             ## The path is like "@A" or "//@A": optimize this to a special
             ## composite opcode that is run directly by start_element().
 
-            push @{$self->{EveryAttributeOpTree}}, $kid;
+            push @{$self->{attributeOpTree}}, $kid;
             return ();
         }
     }
@@ -1033,6 +1058,7 @@ sub _optimize_doc_node_desc_or_self_node_kid {
     return $op;
 }
 
+#sub _i { my $i = 0; ++$i while caller( $i ); " |" x $i; }
 sub _combine_common_leading_ops {
     my $self = shift;
     my ( $op ) = @_;
@@ -1042,6 +1068,7 @@ sub _combine_common_leading_ops {
     return $op
         if $op->isa( "XFD::Action" );
 
+#warn _i, $op->optim_signature, "\n";;
     if ( $op->isa( "XFD::union" ) ) {
         my %kids;
         for ( $op->get_kids ) {
@@ -1051,6 +1078,7 @@ sub _combine_common_leading_ops {
         for ( values %kids ) {
             ## TODO: deal with unions inside unions.
             if ( @$_ > 1 && $_->[0]->can( "force_set_next" ) ) {
+#warn _i, "unionizing ", $op->optim_signature, "'s kids ", join( ", ", map $_->optim_signature, @$_ ), "\n";
                 $_->[0]->force_set_next(
                     XFD::union->new( map $_->get_next, @$_ )
                 );
@@ -1058,11 +1086,9 @@ sub _combine_common_leading_ops {
             }
         }
 
-        ## The sort() is just to get stable ordering so thate
-        ## it's easy to reproduce bugs.
         $op->set_kids(
             map $self->_combine_common_leading_ops( $_ ),
-            map @{$kids{$_}}, sort keys %kids
+            map @{$kids{$_}}, keys %kids
         );
 
         return ($op->get_kids)[0] if $op->get_kids == 1;
@@ -1104,21 +1130,37 @@ sub xvalue() {
         : $XFD::ctx && $XFD::ctx->{Node};
 }
 
-=item xvaluetype
+=item xvalue_type
 
-Returns the type of the result returned by xvalue.  This is either
-a SAX event name, "attribute", or "" (for a string), "HASH" for a hash
-(note that struct() also returns a hash; these types are Perl data
-structure types, not EventPath types).
+Returns the type of the result returned by xvalue.  This is either a SAX
+event name or "attribute" for path rules ("//a"), or "" (for a string),
+"HASH" for a hash (note that struct() also returns a hash; these types
+are Perl data structure types, not EventPath types).
+
+This is the same as xeventtype for all rules that don't evaluate
+functions like "string()" as their top level expression.
 
 =cut
 
-sub xvaluetype() {
+sub xvalue_type() {
     local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
 
     return $XFD::cur_self->{XValue} == $XFD::ctx->{Node}
         ? $XFD::ctx->{EventType}
         : ref $XFD::ctx->{Node};
+}
+sub xvaluetype() { goto \&xvalue_type } ## deprecated syntax
+
+=item xeventtype
+
+Returns the type of the current SAX event.
+
+=cut
+
+sub xevent_type() {
+    local $XFD::cur_self = shift if @_ && UNIVERSAL::isa( $_[0], __PACKAGE__ );
+
+    return $XFD::ctx->{EventType};
 }
 
 =item xrun_next_action
@@ -1994,7 +2036,7 @@ sub _execute_next_action {
     my $sub = shift @{$actions->{$key}};
     delete $actions->{$key} unless @{$actions->{$key}};
 
-    $self->{LastHandlerResult} = $sub->();
+    $self->{LastHandlerResult} = $sub->( $self, $XFD::ctx->{Node} );
     emit_trace_SAX_message "EventPath: result set to ", defined $self->{LastHandlerResult} ? "'$self->{LastHandlerResult}'" : "undef" if is_tracing;
 
 #    if ( exists $XFD::ctx->{EndContext} && exists $XFD::ctx->{EndSubs} ) {
@@ -2031,6 +2073,20 @@ sub _queue_pending_event {
         && ! $self->{PendingEvents}->[0]->{PostponementCount}
     ) {
         my $c = shift @{$self->{PendingEvents}};
+
+        if ( show_buffer_highwater
+            && @{$self->{PendingEvents}}
+            && @{$self->{PendingEvents}} >= $self->{BufferHighwater}
+        ) {
+            $self->{BufferHighwater} = @{$self->{PendingEvents}};
+            if ( @{$self->{PendingEvents}} > $self->{BufferHighwater} ) {
+                @{$self->{BufferHighwaterEvents}} = ( $c );
+            }
+            else {
+                push @{$self->{BufferHighwaterEvents}}, $c;
+            }
+        }
+
         if (
             substr( $c->{EventType}, 0, 4 ) ne "end_"
 #            substr( $c->{EventType}, 0, 6 ) eq "start_"
@@ -2136,6 +2192,11 @@ sub start_document {
     delete $self->{DocStartedFlags};
     $self->{PendingEvents} = [];
 
+    if ( show_buffer_highwater ) {
+        $self->{BufferHighwater} = 0;
+        $self->{BufferHighwaterEvents} = [];
+    }
+
     local $XFD::ctx = $self->{DocCtx};
     emit_trace_SAX_message "EventPath: using doc event ", _ev $XFD::ctx if is_tracing;
     $self->{CtxStack} = [ $XFD::ctx ];
@@ -2161,9 +2222,7 @@ sub end_document {
     confess "Bug: context stack should be empty!"
         unless ! @{$self->{CtxStack}};
 
-#    if ( $self->{DocCtx}->{EndSubs} ) {
-        $self->_call_queued_end_subs( end_document => $start_ctx, @_ );
-#    }
+    $self->_call_queued_end_subs( end_document => $start_ctx, @_ );
 
     if ( exists $self->{AutoStartedHandlers} ) {
         for ( reverse @{$self->{AutoStartedHandlers}} ) {
@@ -2172,6 +2231,40 @@ sub end_document {
     }
 
     @{$self->{XStack}} = ();
+
+    if ( show_buffer_highwater ) {
+        warn ref $self,
+            " buffer highwater mark was ",
+            $self->{BufferHighwater} + 1,
+            $self->{BufferHighwater}
+                ? (
+                " for event",
+                @{$self->{BufferHighwaterEvents}} > 1
+                    ? "s"
+                    : (),
+                ":\n",
+                map {
+                    my $n = $_->{Node};
+                    join( "",
+                        "    $_->{EventType}",
+                        defined $n->{Name}
+                            ? ( " ", $n->{Name} )
+                            : (),
+                        defined $n->{Data}
+                            ? ( " \"", 
+                                length $n->{Data} > 40
+                                    ? ( substr( $n->{Data}, 0, 40 ), "..." )
+                                    : $n->{Data},
+                                "\""
+                            )
+                            : (),
+                        "\n"
+                    );
+                } @{$self->{BufferHighwaterEvents}}
+                )
+                : ( " (no events were buffered)\n" );
+        @{$self->{BufferHighwaterEvents}} = ();
+    }
 
     return $self->{LastHandlerResult};
 }
@@ -2194,15 +2287,15 @@ sub start_element {
             $_->[0]->( @{$_}[1..$#$_], @_ );
         }
 
-        $self->{OncePerElementSub}->( $self, [] )
-            if $self->{OncePerElementSub};
+        $self->{start_elementSub}->( $self, [] )
+            if $self->{start_elementSub};
 
         $self->_queue_pending_event( $XFD::ctx );
     }
 
     if (
         (
-            $self->{OncePerAttributeSub}
+            $self->{attributeSub}
             || exists $XFD::ctx->{ChildCtx}->{attribute}  ## Any attr handlers?
         )
         && exists $elt->{Attributes}           ## Any attrs?
@@ -2212,15 +2305,12 @@ sub start_element {
         ## Put attrs in a reproducible order.  perl5.6.1 and perl5.8.0
         ## use different hashing algs, this helps keep code stable
         ## across versions.
-        for my $attr (
-            sort {
-                ( $a->{NamespaceURI} || "" ) cmp ( $b->{NamespaceURI} || "" )
-                                              ||
-                ( $a->{LocalName}    || "" ) cmp ( $b->{LocalName}    || "" )
-                                              ||
-                ( $a->{Name}         || "" ) cmp ( $b->{Name}         || "" )
-            } values %{$elt->{Attributes}}
-        ) {
+        my @attrs = values %{$elt->{Attributes}};
+        @attrs = sort {
+            ( $a->{Name} || "" ) cmp ( $b->{Name} || "" )
+        } @attrs if $self->{SortAttributes};
+
+        for my $attr ( @attrs ) {
             local $XFD::ctx = $self->_build_ctx;
 
             $XFD::ctx->{EventType} = "attribute";
@@ -2231,8 +2321,8 @@ sub start_element {
                 $_->[0]->( @{$_}[1..$#$_], @_ );
             }
 
-            $self->{OncePerAttributeSub}->( $self, [] )
-                if $self->{OncePerAttributeSub};
+            $self->{attributeSub}->( $self, [] )
+                if $self->{attributeSub};
 
             $self->_queue_pending_event( $XFD::ctx );
         }
@@ -2248,25 +2338,41 @@ sub end_element {
 
     my $start_ctx = pop @{$self->{CtxStack}}; # Remove the child context
 
-#    if ( $start_ctx->{EndSubs} ) {
-        $self->_call_queued_end_subs( end_element => $start_ctx, @_ );
-#    }
+    $self->_call_queued_end_subs( end_element => $start_ctx, @_ );
 
     return;
 }
 
 
 compile_missing_methods __PACKAGE__, <<'CODE_END', sax_event_names;
+#line 1 XML::Filter::Dispatcher::<EVENT>()
 sub <EVENT> {
     my $self = shift ;
-    return unless @{$self->{CtxStack}} &&
-        $self->{CtxStack}->[-1]->{ChildCtx}->{<EVENT>};
+    return unless (
+        @{$self->{CtxStack}}
+        && $self->{CtxStack}->[-1]->{ChildCtx}->{<EVENT>}
+        )
+        || $self->{<EVENT>Sub};
 
     my ( $data ) = @_;
 
+    local $XFD::cur_self = $self;
+
     local $XFD::ctx = $self->_build_ctx;
 
-    $self->_call_queued_subs( <EVENT> => @_ );
+    $XFD::ctx->{EventType} = "<EVENT>";
+    $XFD::ctx->{Node}      = $data;
+    $XFD::ctx->{HighScore} = -1;
+
+    for ( @{$XFD::ctx->{<EVENT>}} ) {
+        $_->[0]->( @{$_}[1..$#$_], @_ );
+    }
+
+    $self->{<EVENT>Sub}->( $self, [] )
+        if $self->{<EVENT>Sub};
+
+    $self->_queue_pending_event( $XFD::ctx );
+
     $self->_call_queued_end_subs( @_ ) if $XFD::ctx->{EndSubs};
 
     return undef;
@@ -2799,6 +2905,35 @@ Nice messages on legitimate but unsupported axes.
 C<add_rule()>, C<remove_rule()>, C<set_rules()> methods.
 
 =back
+
+=head1 OPTIMIZING
+
+Pass Assume_xvalue => 0 flag to tell X::F::D not to support xvalue
+and xvalue_type, which lets it skip some instructions and run faster.
+
+Pass SortAttributes => 0 flag to prevent calling sort() for each
+element's attributes (note that Perl changes hashing algorithms
+occasionally, so setting this to 0 may expose ordering dependancies
+in your code).
+
+=head1 DEBUGGING
+
+NOTE: this section describes things that may change from version to
+version as I need different views in to the internals.
+
+Set the option Debug => 1 to see the Perl code for the compiled ruleset.
+If you have GraphViz.pm and ee installed and working, set Debug => 2 to
+see a graph diagram of the intermediate tree generated by the compiler.
+
+Set the env. var XFDSHOWBUFFERHIGHWATER=1 to see what events were
+postponed the most (in terms of how many events had to pile up behind
+them).  This can be of some help if you experience lots of buffering or
+high latency through the filter.  Latency meaning the lag between when
+an event arrives at this filter and when it is dispatched to its
+actions.  This will only report events that were actually postponed.  If
+you have a 0 latency filter, the report will list no events.
+
+Set the env. var XFDOPTIMIZE=0 to prevent all sorts of optimizations.
 
 =head1 LIMITATIONS
 

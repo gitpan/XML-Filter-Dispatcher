@@ -717,7 +717,7 @@ sub XFD::PathTest::as_immed_code {
 
     return $self->insert_next_in_to_template(
         $self->immed_code_template( @_ ),
-        $self->[_next] ? $self->[_next]->as_immed_code( @_ ) : shift()
+        $self->[_next] ? $self->[_next]->as_immed_code( @_ ) : ""
     );
 }
 
@@ -736,6 +736,7 @@ sub XFD::PathTest::immed_code_template {
    @XFD::ExprEval::ISA = qw( XFD::PathTest );
 sub XFD::ExprEval::as_incr_code {
     my $self = shift;
+    my ( $context ) = @_;
 
     my $boolerizer = "";
     $boolerizer = " ? true : false"
@@ -744,6 +745,8 @@ sub XFD::ExprEval::as_incr_code {
     my $action_ops = $self->[_next];
 
     my $action_id = $action_ops->action_id;
+
+    local $context->{SetXValuesEntry} = 1;
 
     my $expr_code = get_expr_code( "", $self->[0], <<CODE_END, $self->[_next], undef, @_ );
 ## expression evaluation
@@ -782,11 +785,8 @@ sub XFD::Action::fixup {
 
 sub XFD::Action::gate_action {
     my $self = shift;
-    my $action_code = join shift, "## action\n", "# end action\n";
+    my $action_code = shift;
     my ( $context ) = @_;
-
-    _indent $action_code if _indentomatic;
-    _indent $action_code if _indentomatic;
 
     my $id    = $self->action_id;
     my $score = $self->action_score;
@@ -796,11 +796,19 @@ sub XFD::Action::gate_action {
         ? ( "PendingEndActions", "pending end action" )
         : ( "PendingActions", "pending action" );
 
+    unless ( $context->{CallActionDirectly} ) {
+        _indent $action_code if _indentomatic;
+        $action_code = <<CODE_END 
+sub { ## action
+$action_code}
+CODE_END
+    }
+
     $action_code = <<CODE_END;
 emit_trace_SAX_message "adding $s $score for event ", _ev \$ctx if is_tracing;
-  push \@{\$ctx->{$now_or_later}->{$score}}, sub {
-$action_code  };
+push \@{\$ctx->{$now_or_later}->{$score}}, $action_code;
 CODE_END
+
 
     if ( defined $context->{action_wrapper} ) {
         my $foo = $context->{action_wrapper};
@@ -825,14 +833,19 @@ Carp::confess unless @_;
 
     my $action_id = $self->action_id;
 
-    ## TODO: Don't local()ize and set \$cur_self->{XValue} unless need be.
-    return $self->gate_action( <<CODE_END, $context ) ;
-local \$cur_self->{XValue} =
-  \$#{\$ctx->{XValues}} >= $action_id && defined \$ctx->{XValues}->[$action_id]
-    ? \$ctx->{XValues}->[$action_id]
-    : \$ctx->{Node};
-$action_code
-CODE_END
+    my $xvalue_expr = "";
+    if ( $dispatcher->{SetXValue} ) {
+        $xvalue_expr = $context->{SetXValuesEntry}
+            ? "local \$cur_self->{XValue} = \$ctx->{XValues}->[$action_id];\n"
+            : "local \$cur_self->{XValue} = \$ctx->{Node};\n";
+    }
+
+    local $context->{CallActionDirectly} = 1
+        unless length $xvalue_expr;
+    $action_code =~ s/->\(\s*\@_\s*\)//
+        unless length $xvalue_expr;
+
+    return $self->gate_action( "$xvalue_expr$action_code", $context ) ;
 }
 
 sub XFD::Action::PerlCode::as_immed_code {
@@ -881,6 +894,30 @@ Carp::confess unless @_;
     my $new_handler_expr = $self->action_code;
     my $action_score     = $self->action_score;
 
+    my $forward_end_event_too =
+        grep /^start_/, @{$context->{PossibleEventTypes}};
+
+    my $end_event_forwarding_code = "";
+    if ( $forward_end_event_too ) {
+        $end_event_forwarding_code = <<CODE_END;
+  emit_trace_SAX_message "EventPath: queuing end_ action for \$event_type event ", _ev \$ctx if is_tracing;
+  push \@{\$ctx->{PendingEndActions}->{$action_score}}, sub {
+    emit_trace_SAX_message "EndSub end_ action for ", _ev \$ctx if is_tracing;
+    my \$h = $new_handler_expr;
+    my \$event_type = \$ctx->{EventType};
+    \$cur_self->{LastHandlerResult} = \$h->\$event_type( \$ctx->{Node} );
+  };
+CODE_END
+
+        if ( grep !/^start_/, @{$context->{PossibleEventTypes}} ) {
+            _indent $end_event_forwarding_code if _indentomatic;
+            $end_event_forwarding_code = <<CODE_END;
+  if ( substr( \$event_type, 0, 6 ) eq "start_" ) {
+$end_event_forwarding_code  }
+CODE_END
+        }
+    }
+
     ## TODO: only forward end events if this op's not in start-element::
     ## or end-element:: context and is intercepting a start_document or
     ## start_element.
@@ -900,18 +937,7 @@ Carp::confess unless @_;
   }
 
   \$cur_self->{LastHandlerResult} = \$h->\$event_type( \$ctx->{Node} );
-
-  if ( substr( \$event_type, 0, 6 ) eq "start_" ) {
-    emit_trace_SAX_message "EventPath: queuing end_ action for \$event_type event ", _ev \$ctx if is_tracing;
-    push \@{\$ctx->{PendingEndActions}->{$action_score}},
-      sub {
-        emit_trace_SAX_message "EndSub end_ action for ", _ev \$ctx if is_tracing;
-        my \$h = $new_handler_expr;
-        my \$event_type = \$ctx->{EventType};
-        \$cur_self->{LastHandlerResult} = \$h->\$event_type( \$ctx->{Node} );
-      };
-  }
-}
+$end_event_forwarding_code}
 CODE_END
 }
 
@@ -1014,7 +1040,7 @@ sub action {
         ## directly.
         $a_hash->{CodeRef} = $action;
         $a_hash->{Code} =
-            "\$cur_self->{Actions}[$action_num]->{CodeRef}->( \$cur_self, \$ctx->{Node} )";
+            "\$cur_self->{Actions}->[$action_num]->{CodeRef}->( \@_ )";
         return XFD::Action::PerlCode->new( $a_hash );
     }
 
@@ -2128,7 +2154,7 @@ sub XFD::Function::namespace_uri::new {
 }
 sub XFD::Function::namespace_uri::as_immed_code {
     shift->build_expr( 1, 1, $_[0], sub {
-        "( exists( $_[0]\->{Node}->{NamespaceURI} ) && $_[0]\->{Node}->{NamespaceURI} ) || \"\"";
+        "( defined( $_[0]\->{Node}->{NamespaceURI} ) ? $_[0]\->{Node}->{NamespaceURI} : \"\" )";
     } );
 }
 ##########
@@ -2392,6 +2418,8 @@ _compile_math_op modulus        => "%";
 ##
 @XFD::doc_node::ISA = qw( XFD::PathTest );
 
+sub XFD::doc_node::optim_signature { ref shift }
+
 sub XFD::doc_node::possible_event_type_map {
     ## This is because there's no surrounding context for this, ever,
     ## so we need to bootstrap $context->{PossibleEventTypes} by
@@ -2466,21 +2494,6 @@ sub XFD::self_node::incr_code_template { "<NEXT>" }
 ##########
 @XFD::node_name::ISA = qw( XFD::PathTest );
 
-sub XFD::node_name::_parse_and_jclarkify {
-    my $self = shift;
-    my ( $uri, $local_name ) = $self->_parse_ns_uri_and_localname( @_ );
-    return "{$uri}$local_name";
-}
-
-sub XFD::node_name::new {
-    my $self = shift->XFD::PathTest::new( @_ );
-
-    $self->[0] = $self->_parse_and_jclarkify( $self->[0] )
-        if defined $dispatcher->{Namespaces};
-
-    return $self;
-}
-
 sub XFD::node_name::curry_tests { qw( start_element attribute ) }
 
 sub XFD::node_name::possible_event_type_map { {
@@ -2494,9 +2507,7 @@ sub XFD::node_name::condition {
     my $self = shift;
     my ( $ctx_expr ) = @_;
 
-    return defined $dispatcher->{Namespaces}
-       ? qq[do { my \$d = $ctx_expr\->{Node}; "{\$d->{NamespaceURI}}\$d->{LocalName}"} eq '$self->[0]' ]
-       : "$ctx_expr\->{Node}->{Name} eq '$self->[0]'";
+    return "$ctx_expr\->{Node}->{Name} eq '$self->[0]'";
 }
 
 sub XFD::node_name::incr_code_template {
@@ -2517,6 +2528,28 @@ sub XFD::node_name::immed_code_template {
     return <<CODE_END;
 grep ## node name '$self->[0]'
   $cond,
+<NEXT>
+CODE_END
+}
+
+##########
+@XFD::node_local_name::ISA = qw( XFD::node_name );
+
+sub XFD::node_local_name::condition {
+    my $self = shift;
+    my ( $ctx_expr ) = @_;
+
+    return "$ctx_expr\->{Node}->{LocalName} eq '$self->[0]'";
+}
+
+sub XFD::node_local_name::incr_code_template {
+    my $self = shift;
+    my $cond = $self->condition( "\$ctx" );
+
+    return <<CODE_END;
+if ( $cond ) {
+  emit_trace_SAX_message "EventPath: node local_name '$self->[0]' found" if is_tracing;
+  <NEXT>}
 CODE_END
 }
 
@@ -2529,7 +2562,7 @@ sub XFD::namespace_test::new {
     die "Namespaces option required to support '$self->[0]' match\n"
         unless defined $dispatcher->{Namespaces};
 
-    ( $self->[0] ) = $self->_parse_ns_uri_and_localname( $self->[0] );
+#    ( $self->[0] ) = $self->_parse_ns_uri_and_localname( $self->[0] );
 
     return $self;
 }
@@ -2548,7 +2581,7 @@ sub XFD::namespace_test::condition {
     my ( $ctx_expr ) = @_;
 
     return 
-       "exists $ctx_expr\->{Node}->{NamespaceURI} && $ctx_expr\->{Node}->{NamespaceURI} eq '$self->[0]'";
+       "$ctx_expr\->{Node}->{NamespaceURI} eq '$self->[0]'";
 }
 
 sub XFD::namespace_test::incr_code_template {
@@ -2567,8 +2600,9 @@ sub XFD::namespace_test::immed_code_template {
     my $cond = $self->condition( "\$_" );
 
     return <<CODE_END;
-grep ## node name '$self->[0]'
+grep ## node namespace '$self->[0]'
   $cond,
+<NEXT>
 CODE_END
 }
 
@@ -2596,12 +2630,14 @@ sub XFD::union::new {
     return bless [@_], $class;
 }
 
+sub XFD::union::optim_signature { ref shift }
+
 sub XFD::union::add { push @{shift()}, @_ }
 
 sub XFD::union::set_next { $_->set_next( @_ ) for @{shift()} }
 
 ## get_kids/set_kids is used by external code only, like the optimizer
-sub XFD::union::get_kids { @{shift()} }
+sub XFD::union::get_kids { map $_->isa( "XFD::union" ) ? $_->get_kids : $_, @{shift()} }
 sub XFD::union::set_kids { my $self = shift; @$self = @_ }
 
 sub XFD::union::curry_tests {
@@ -2648,8 +2684,8 @@ sub XFD::union::as_incr_code {
 
 ##########
 ##
-## An XFD::Rule is a special "noop" op that allows exceptions to be
-## labelled with a rule's pattern.
+## An XFD::Rule is a special "noop" op that allows compilation
+## exceptions to be labelled with a rule's pattern.
 ##
 @XFD::Rule::ISA = qw( XFD::PathTest );
 
@@ -2693,6 +2729,15 @@ sub XFD::predicate::new {
     return shift->XFD::PathTest::new( XFD::Function::boolean->new( @_ ) );
 }
 
+## Disable folding of predicates for now.  What we really need to do
+## is cat up all the signatures of the code in the predicate in to the
+## signature so only identical ones will be optimized.
+##
+## A better approace longer term might be to hoist the predicate
+## precursors in fixup phase so they are normal ops and would get
+## optimized normally.
+sub XFD::predicate::optim_signature { int shift }
+
 sub _expr() { 0 }
 
 sub XFD::predicate::curry_tests {
@@ -2710,9 +2755,6 @@ sub XFD::predicate::curry_tests {
 sub XFD::predicate::as_incr_code {
     my $self = shift;
     my ( $context ) = @_;
-
-    ## TODO: Figure a way for get_expr_code to optimize away this if ( ... ).
-    ## Perhaps by adding a conditional op code.
 
     return get_expr_code "predicate", $self->[_expr], undef, undef, $self->[_next], @_;
 }
@@ -2739,7 +2781,8 @@ sub XFD::Axis::op_type { shift->XFD::Op::op_type . "::" }
 sub XFD::Axis::principal_event_type { "start_element" }
 
 ## Axes have no parameters and are inherently foldable, so return the
-## type of the axis.  Axes that 
+## type of the axis.  Axis ops that need to be curried for different
+## event types can't be folded.
 sub XFD::Axis::optim_signature {
     my $self = shift;
     join "", ref $self, "(", $self->[_next]->curry_tests, ":", $self->principal_event_type, ")";
@@ -2821,6 +2864,18 @@ CODE_END
 
 
 sub XFD::Axis::attribute::immed_code_template {
+    my $sort_code = $dispatcher->{SortAttributes} ? <<'CODE_END' : "";
+    } sort {
+        ## Put attributes in a reproducable order, mostly for testing
+        ## purposes.
+        ## TODO: Look for Node->{AttributeOrder} here
+        ( \$a->{NamespaceURI} || "" ) cmp ( \$b->{NamespaceURI} || "" )
+                                      ||
+        ( \$a->{LocalName}    || "" ) cmp ( \$b->{LocalName}    || "" )
+                                      ||
+        ( \$a->{Name}         || "" ) cmp ( \$b->{Name}         || "" )
+CODE_END
+
     return <<CODE_END;
 ( ## attribute::
   exists \$ctx->{Node}->{Attributes} && \$ctx->{Node}->{Attributes}
@@ -2834,17 +2889,8 @@ sub XFD::Axis::attribute::immed_code_template {
       };
       emit_trace_SAX_message "built attribute event ", _ev \$ctx if is_tracing;
       \$ctx;
-    } sort {
-        ## Put attributes in a reproducable order, mostly for testing
-        ## purposes.
-        ## TODO: Look for Node->{AttributeOrder} here
-        ( \$a->{NamespaceURI} || "" ) cmp ( \$b->{NamespaceURI} || "" )
-                                      ||
-        ( \$a->{LocalName}    || "" ) cmp ( \$b->{LocalName}    || "" )
-                                      ||
-        ( \$a->{Name}         || "" ) cmp ( \$b->{Name}         || "" )
-    }
-    values %{\$ctx->{Node}->{Attributes}}
+$sort_code
+    } values %{\$ctx->{Node}->{Attributes}}
   : ()
 ) # attribute::
 CODE_END
@@ -3294,6 +3340,15 @@ sub XFD::EventType::op_type { shift->XFD::Op::op_type . "()" }
 
 ##########
    @XFD::EventType::node::ISA = qw( XFD::EventType );
+## node() has no parameters and is inherently foldable.
+## node() ops that need to be curried for different
+## event types can't be folded.
+sub XFD::EventType::node::optim_signature {
+    my $self = shift;
+    join "", ref $self, "(", defined $self->[_next] ? $self->[_next]->curry_tests : (), ")";
+}
+
+
 sub XFD::EventType::node::curry_tests {
     my $self = shift;
     return $self->[_next]->curry_tests
@@ -3380,22 +3435,56 @@ CODE_END
 ##
 
 ##########
-   @XFD::Optim::EveryStartElement::ISA = qw( XFD::union );
-sub XFD::Optim::EveryStartElement::possible_event_types { qw( start_element ) }
-sub XFD::Optim::EveryStartElement::as_incr_code {
+   @XFD::Optim::attribute::ISA = qw( XFD::union );
+sub XFD::Optim::attribute::possible_event_types { qw( start_element ) }
+sub XFD::Optim::attribute::as_incr_code {
     my $self = shift;
     my ( $context ) = @_;
-    local $context->{PossibleEventTypes} = [qw( start_element )];
+    local $context->{PossibleEventTypes} = [qw( attribute )];
     $self->XFD::union::as_incr_code( @_ );
 }
 
 ##########
-   @XFD::Optim::EveryAttribute::ISA = qw( XFD::union );
-sub XFD::Optim::EveryAttribute::possible_event_types { qw( start_element ) }
-sub XFD::Optim::EveryAttribute::as_incr_code {
+   @XFD::Optim::characters::ISA = qw( XFD::union );
+sub XFD::Optim::characters::possible_event_types { qw( start_element ) }
+sub XFD::Optim::characters::as_incr_code {
     my $self = shift;
     my ( $context ) = @_;
-    local $context->{PossibleEventTypes} = [qw( attribute )];
+    local $context->{PossibleEventTypes} = [qw( characters )];
+    $self->XFD::union::as_incr_code( @_ );
+}
+
+##########
+   @XFD::Optim::comment::ISA = qw( XFD::union );
+sub XFD::Optim::comment::possible_event_types {
+    qw( start_document start_element )
+}
+sub XFD::Optim::comment::as_incr_code {
+    my $self = shift;
+    my ( $context ) = @_;
+    local $context->{PossibleEventTypes} = [qw( comment )];
+    $self->XFD::union::as_incr_code( @_ );
+}
+
+##########
+   @XFD::Optim::processing_instruction::ISA = qw( XFD::union );
+sub XFD::Optim::processing_instruction::possible_event_types {
+    qw( start_document start_element )
+}
+sub XFD::Optim::processing_instruction::as_incr_code {
+    my $self = shift;
+    my ( $context ) = @_;
+    local $context->{PossibleEventTypes} = [qw( processing_instruction )];
+    $self->XFD::union::as_incr_code( @_ );
+}
+
+##########
+   @XFD::Optim::start_element::ISA = qw( XFD::union );
+sub XFD::Optim::start_element::possible_event_types { qw( start_element ) }
+sub XFD::Optim::start_element::as_incr_code {
+    my $self = shift;
+    my ( $context ) = @_;
+    local $context->{PossibleEventTypes} = [qw( start_element )];
     $self->XFD::union::as_incr_code( @_ );
 }
 

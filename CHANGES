@@ -1,5 +1,13 @@
 CHANGES file for XML::Filter::Dispatcher
 
+0.51 Sat May 31 07:17:29 EDT 2003
+    - Add XFDSHOWBUFFERHIGHWATER so you can tell which events are causing the
+      most buffering
+    - Add SetXValue => 0 option to speed things up if no xvalue* calls
+    - Add SortAttributes => 0 option to speed things up if attr order does not
+      need to be repeatable or stable.
+    - More common-case optimizations
+
 0.5 Mon May 26 03:38:46 EDT 2003
     - Optimizer speeds some common cases drastically
     - more efficient code

@@ -292,9 +292,26 @@ args :
     ;
   
 node_test :
-    QNAME                                 { XFD::node_name->new( $_[1] ) }
+    QNAME {
+        $XFD::dispatcher->{Namespaces}
+            ? do {
+                my ( $ns_uri, $local_name ) =
+                    XFD::PathTest->_parse_ns_uri_and_localname( $_[1] );
+
+                my $op = XFD::namespace_test->new( $ns_uri );
+                $op->set_next(
+                    XFD::node_local_name->new( $local_name )
+                );
+                $op;
+            }
+            : XFD::node_name->new( $_[1] );
+    }
     | STAR                                { XFD::EventType::principal_event_type->new; }
-    | NAME_COLON_STAR                     { XFD::namespace_test->new( $_[1] ) }
+    | NAME_COLON_STAR {
+        my ( $ns_uri ) = 
+            XFD::PathTest->_parse_ns_uri_and_localname( $_[1] );
+        XFD::namespace_test->new( $ns_uri )
+    }
     | PI            LPAR opt_literal RPAR { XFD::EventType::processing_instruction
                                                            ->new( $_[2] ) }
     | COMMENT       LPAR RPAR             { XFD::EventType::comment      ->new }

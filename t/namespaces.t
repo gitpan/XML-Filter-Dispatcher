@@ -24,6 +24,7 @@ sub {
         Namespaces => {
             goo  => "foo-ns",
         },
+#        Debug => 2,
         Rules => [
             'root'  => sub { push @out, "root"  },
             '@goo:a'=> sub { push @out, "foo:a" },
@@ -34,7 +35,7 @@ sub {
     ok 1;
 },
 
-sub { ok int @out, 4 },
+sub { ok int @out, 4; },
 sub { ok $out[0], "root",  "out[0]" },
 sub { ok $out[1], "foo:a", "out[1]" },
 sub { ok $out[2], "f",     "out[2]" },
